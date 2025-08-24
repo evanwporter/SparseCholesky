@@ -1,3 +1,4 @@
+#pragma once
 #include <algorithm>
 #include <cassert>
 #include <cstring>
@@ -25,6 +26,7 @@ private:
 
 public:
 	/// Constructor
+	// Allocates memory
 	spd(int n, int nzmax)
 		: n_(n)
 		, nzmax_(nzmax)
@@ -42,7 +44,7 @@ public:
 	// =============
 	//   Accessors
 	// =============
-	int size() const {
+	size_t size() const {
 		return n_;
 	}
 	int capacity() const {
@@ -72,8 +74,9 @@ public:
 	// Read-only element access (i, j)
 	double operator[](int i, int j) const {
 		assert(i >= 0 && i < n_ && j >= 0 && j < n_);
+		
 		if(j > i)
-			std::swap(i, j); // Only store lower triangle
+			std::swap(i, j); // Since we only store the lower triangle
 
 		for(int idx = p_[i]; idx < p_[i + 1]; ++idx) {
 			if(j_[idx] == j) {
@@ -143,14 +146,16 @@ spd<T> triplet_to_spd(const std::vector<int>& ti, // row indices
 	return A;
 }
 
+using elimination_tree = std::vector<int>;
+
 /// Compute elimination tree of symmetric SPD matrix stored in lower-triangular CSR
 template <typename T>
-std::vector<int> etree(const spd<T>& A) {
+elimination_tree etree(const spd<T>& A) {
     int n = A.size();
     const auto& p = A.p();
     const auto& j = A.j();
 
-    std::vector<int> parent(n, -1);
+    elimination_tree parent(n, -1);
     std::vector<int> ancestor(n, -1);
 
     for (int i = 0; i < n; i++) {
@@ -176,3 +181,28 @@ std::vector<int> etree(const spd<T>& A) {
     }
     return parent;
 }
+
+// TODO clarify name
+/// Build SPD from a "row pattern" input (each row lists the columns to include).
+/// Only lower triangle (j <= i) entries are stored. Values are set to 1.0 by default.
+template <typename T>
+spd<T> build_spd_from_pattern(const std::vector<std::vector<int>>& pattern) {
+    std::vector<int> ti;
+    std::vector<int> tj;
+    std::vector<T>   tx;
+
+	const int n = (int)pattern.size();
+
+    for (int i = 0; i < n; ++i) {
+        for (int col : pattern[i]) {
+            int r = i, c = col;
+            if (c > r) std::swap(r, c);  // enforce lower triangle
+            ti.push_back(r);
+            tj.push_back(c);
+            tx.push_back(T(1));          // default value = 1
+        }
+    }
+
+    return triplet_to_spd(ti, tj, tx, n);
+}
+

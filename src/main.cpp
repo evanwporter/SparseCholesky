@@ -2,25 +2,28 @@
 #include <vector>
 
 #include "spd.hpp"
+#include "pprinter.hpp"
 
 int main() {
-	std::vector<int> ti = {0, 1, 1, 2, 2}; // Row indices
-	std::vector<int> tj = {0, 0, 1, 1, 2}; // Col indices
-	std::vector<double> tx = {4.0, 1.0, 3.0, 2.0, 5.0}; // Values
 
-	int n = 3; // Matrix size
+	std::vector<std::vector<int>> pattern = {
+		{0}, // row 0
+		{1}, // row 1
+		{0, 2}, // row 2
+		{3}, // row 3
+		{0, 2, 4}, // row 4
+		{0, 1, 3, 5}, // row 5
+		{0, 2, 5, 6} // row 6
+	};
 
-	// Convert triplet to SPD format
-	spd<double> A = triplet_to_spd(ti, tj, tx, n);
+    spd<double> A = build_spd_from_pattern<double>(pattern);
 
 	// Print matrix in dense format using operator[]
-	std::cout << "Matrix A (dense form):\n";
-	for(int i = 0; i < n; ++i) {
-		for(int j = 0; j < n; ++j) {
-			std::cout << A[i, j] << " ";
-		}
-		std::cout << "\n";
-	}
+	std::cout << "Matrix A:\n";
+	std::cout << to_string<double>(A) << std::endl;
 
-	return 0;
+    auto parent = etree(A);
+    std::cout << "\nElimination tree:\n" << to_string(parent) << std::endl;
+
+    return 0;
 }
