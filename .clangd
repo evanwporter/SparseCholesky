@@ -1,0 +1,12 @@
+CompileFlags:
+  #C++23
+  Add: ["-std=c++latest", "/clang:-std=c++23"]
+  # Remove: [
+  #   "-std:c++latest",
+  #   "-resource-dir=*"
+  # ]
+
+# Diagnostics:
+#   Suppress:
+#     - error_subscript_overload
+#     - ovl_no_viable_subscript
