@@ -15,7 +15,8 @@ private:
 	/// Max non-zero entries (lower triangle only)
 	std::size_t nzmax_ = 0;
 
-	/// Row pointers (size n+1), like CSR
+	/// Row pointers (size n+1)
+	// Contains the indice where the value starts in j_ and x_
 	std::vector<int> p_;
 
 	/// Column indices (size nzmax)
@@ -129,7 +130,7 @@ spd<T> triplet_to_spd(const std::vector<int>& ti, // row indices
 	for(int i = 0; i < n; ++i)
 		p[i + 1] = p[i] + row_nnz[i];
 
-	int nzmax = merged.size();
+	const int nzmax = (int)merged.size();
 	spd<T> A(n, nzmax);
 	auto& j = A.j();
 	auto& x = A.x();
@@ -151,7 +152,7 @@ using elimination_tree = std::vector<int>;
 /// Compute elimination tree of symmetric SPD matrix stored in lower-triangular CSR
 template <typename T>
 elimination_tree etree(const spd<T>& A) {
-    int n = A.size();
+    const int n = (int)A.size();
     const auto& p = A.p();
     const auto& j = A.j();
 
@@ -189,20 +190,63 @@ template <typename T>
 spd<T> build_spd_from_pattern(const std::vector<std::vector<int>>& pattern) {
     std::vector<int> ti;
     std::vector<int> tj;
-    std::vector<T>   tx;
+    std::vector<T> tx;
 
 	const int n = (int)pattern.size();
 
     for (int i = 0; i < n; ++i) {
         for (int col : pattern[i]) {
             int r = i, c = col;
-            if (c > r) std::swap(r, c);  // enforce lower triangle
+            if (c > r) std::swap(r, c); // enforce lower triangle
             ti.push_back(r);
             tj.push_back(c);
-            tx.push_back(T(1));          // default value = 1
+            tx.push_back(T(1)); // default value = 1
         }
     }
 
     return triplet_to_spd(ti, tj, tx, n);
 }
 
+/// Compute row counts of L (number of nonzeros in each row)
+template <typename T>
+std::vector<int> row_counts(const spd<T>& A, const elimination_tree& parent) {
+    const int n = (int)A.size();
+    std::vector<int> rowcount(n, 0);
+    std::vector<char> visited(n, 0);
+
+    const auto& p = A.p();
+    const auto& j = A.j();
+
+    for (int col = 0; col < n; col++) {
+        std::vector<int> reach;
+        std::fill(visited.begin(), visited.end(), 0);
+
+        // Collect nonzeros in column 'col' of A (below diag)
+        for (int i = col; i < n; i++) {
+            for (int idx = p[i]; idx < p[i+1]; idx++) {
+                if (j[idx] == col && i >= col) {
+                    // climb up etree starting from i
+                    int v = i;
+                    while (v != -1 && !visited[v]) {
+                        visited[v] = 1;
+                        reach.push_back(v);
+                        v = parent[v];
+                    }
+                }
+            }
+        }
+
+        // Always include diagonal col
+        if (!visited[col]) {
+            reach.push_back(col);
+            visited[col] = 1;
+        }
+
+        // For each row index in this column's pattern, increment rowcount
+        for (int r : reach) {
+            rowcount[r]++;
+        }
+    }
+
+    return rowcount;
+}
