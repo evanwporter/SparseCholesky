@@ -11,7 +11,9 @@ set(LIB_SOURCES
 
 add_library(libsparse STATIC ${LIB_SOURCES})
 
-target_include_directories(libsparse PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(libsparse 
+    PUBLIC ${CMAKE_SOURCE_DIR}/include 
+           ${CMAKE_SOURCE_DIR}/pcg-cpp/include)
 
 set(EXE_SOURCES
     src/main.cpp

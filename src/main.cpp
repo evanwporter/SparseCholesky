@@ -36,7 +36,10 @@ int main() {
         std::cout << "Column Count:\n"
                   << to_string(col_count(A, parent, post)) << std::endl;
 
-        std::vector<int> w(n, -1), s(n);
+        std::cout << to_string(random_sparse<double>(10)) << std::endl;
+
+        std::vector<int> w(n, -1);
+        std::vector<int> s(n);
         std::vector<double> x(n);
 
         int top = ereach(A, 1, parent, s, w, x, n);

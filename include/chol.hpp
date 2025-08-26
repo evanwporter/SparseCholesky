@@ -6,9 +6,13 @@
 #include <cmath>
 #include <cstring>
 #include <expected>
+#include <random>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
+
+#include "pcg_random.hpp"
 
 enum class sym {
     none,
@@ -96,6 +100,51 @@ public:
 
         // If we can't find it in the column pointers
         return T(0);
+    }
+
+    /// Transpose matrix
+    csc_matrix<T, sym::none> transpose() const {
+        const int m = static_cast<int>(m_);
+        const int n = static_cast<int>(n_);
+        const auto& Ap = p_;
+        const auto& Ai = i_;
+        const auto& Ax = x_;
+
+        // Allocate result arrays
+        std::vector<int> ATp(m + 1, 0);
+        std::vector<int> ATi(Ap.back(), 0);
+        std::vector<T> ATx(Ap.back(), T(0));
+
+        // Count entries per row (future AT columns)
+        for (int j = 0; j < n; ++j) {
+            for (int p = Ap[j]; p < Ap[j + 1]; ++p) {
+                int r = Ai[p];
+                ATp[r + 1]++;
+            }
+        }
+
+        // Cumulative sum -> ATp
+        for (int r = 0; r < m; ++r)
+            ATp[r + 1] += ATp[r];
+
+        // Fill ATi and ATx
+        std::vector<int> next = ATp; // rolling write heads
+        for (int j = 0; j < n; ++j) {
+            for (int p = Ap[j]; p < Ap[j + 1]; ++p) {
+                int r = Ai[p];
+                int dest = next[r]++;
+                ATi[dest] = j; // col index becomes row index
+                ATx[dest] = Ax[p]; // copy value
+            }
+        }
+
+        // Build result matrix
+        csc_matrix<T, sym::none> AT(m, n, static_cast<int>(ATi.size()));
+        AT.p() = std::move(ATp);
+        AT.i() = std::move(ATi);
+        AT.x() = std::move(ATx);
+
+        return AT;
     }
 };
 
@@ -488,15 +537,14 @@ int ereach(const csc_matrix<T>& A, int k, const std::vector<int>& parent, std::v
 
 std::vector<std::vector<int>> compute_levels(const std::vector<int>& parent);
 
+/**
+ * @brief Calculate the cholesky
+ * @param A Upper triangle of csc_matrix A
+ * @param S parent, cp from your symbolic step
+ * @param optional status
+ */
 template <typename T>
 std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, sym::upper>& A, const SChol& S) {
-    /**
-     * @brief Calculate the cholesky
-     * @param A Upper triangle of csc_matrix A
-     * @param S parent, cp from your symbolic step
-     * @param optional status
-     */
-
     const int n = static_cast<int>(A.size());
     assert(static_cast<int>(S.cp.size()) == n + 1);
     assert(static_cast<int>(S.parent.size()) == n);
@@ -593,3 +641,44 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
 /// Returns a vector<int> of size n, where super[j] is the supernode id of column j.
 /// Also fills `supernodes` with the start indices of each supernode.
 std::vector<int> compute_supernodes(const SChol& S, std::vector<int>& supernodes);
+
+/**
+ * Generate a random symmetric sparse matrix in CSC format (upper triangle stored).
+ * @param n matrix size (square)
+ * @param density percentage of nonzeros to zeros
+ */
+template <typename T>
+csc_matrix<T, sym::upper> random_sparse(int n, double density = 0.25, bool positive_definite = true) {
+    // I used this stack overflow answer as a base
+    // https://stackoverflow.com/a/30742847
+
+    pcg32 gen(21);
+
+    // Choose a random mean between 1 and 6
+    std::uniform_real_distribution<double> dist(-n, n);
+
+    std::vector<int> ti; // row indices
+    std::vector<int> tj; // col indices
+    std::vector<T> tx; // values
+
+    for (int i = 0; i < n; ++i) {
+        for (int j = i; j < n; ++j) { // only upper triangle
+            double v_ij = dist(gen);
+
+            // this forces us to always keep the diagonal
+            if (abs(v_ij) < (density * n) || i == j) {
+                T val = static_cast<T>(dist(gen));
+
+                if (i == j && positive_definite) {
+                    val += static_cast<T>(n); // boost diagonal
+                }
+
+                ti.push_back(i);
+                tj.push_back(j);
+                tx.push_back(val);
+            }
+        }
+    }
+
+    return triplet_to_csc_matrix(ti, tj, tx, n);
+}
