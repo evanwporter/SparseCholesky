@@ -475,7 +475,7 @@ SChol schol(const csc_matrix<T, sym::upper>& A) {
     S.parent = etree(A); // your function above
 
     // postorder of the etree
-    auto post = post_order(S.parent);
+    const auto post = post_order(S.parent);
 
     // column counts for L (includes diagonal)
     auto colcount = col_count(A, S.parent, post);
@@ -494,6 +494,7 @@ SChol schol(const csc_matrix<T, sym::upper>& A) {
 
     // not used for the cholesky, but I have it here for completeness
     S.unz = nz;
+
     return S;
 }
 
@@ -552,6 +553,7 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
     // Allocate result matrix `L` (lower triangular, stored in CSC form)
     csc_matrix<T, sym::lower> L(n, S.cp.back());
     L.p() = S.cp;
+
     auto& Li = L.i();
     auto& Lx = L.x();
 
@@ -566,12 +568,13 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
     auto levels = compute_levels(S.parent);
 
     for (auto lvl : levels) {
+
 #pragma omp parallel for schedule(dynamic) // or guided
 
         for (int idx = 0; idx < lvl.size(); ++idx) {
 
-            /// `k` is the column that we want to factor
-            const int k = lvl[idx];
+            /// `k` is the index of the column that we want to factor
+            const auto k = lvl[idx];
 
             // Work arrays
             std::vector<int> s(n, -1);
@@ -603,9 +606,9 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
 
                 // Accumulate updates
                 // loops over every nonzero column
-                // L.p()[i] points to the start of the column i (where the diag is)
-                // c[i] is the current end
-                // so the nonzero off diagonal entries are between {L.p()[i], c[i] - 1}
+                // `L.p()[i]` points to the start of the column `i` (where the diag is)
+                // `c[i]` is the current end
+                // so the nonzero off diagonal entries are between `{L.p()[i], c[i] - 1}`
                 for (int p = L.p()[i] + 1; p < c[i]; ++p) {
                     // Li[p] is the row index stored at position p
                     // Lx[p] is the numeric value of that entry
