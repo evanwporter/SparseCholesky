@@ -6,6 +6,9 @@ CompileFlags:
   #   "-resource-dir=*"
   # ]
 
+Documentation:
+  CommentFormat: Doxygen
+
 # Diagnostics:
 #   Suppress:
 #     - error_subscript_overload

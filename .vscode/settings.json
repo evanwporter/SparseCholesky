@@ -119,8 +119,7 @@
     "--compile-commands-dir=${workspaceFolder}/build",
     "--clang-tidy",
     "--completion-style=detailed",
-    "--header-insertion=iwyu"
-    // "--completion-style=detailed",
+    "--header-insertion=iwyu",
     // "--header-insertion=never"
   ],
   "[yaml]": {
@@ -137,5 +136,6 @@
   "[cpp]": {
     "editor.formatOnSave": true,
     "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
-  }
+  },
+  "clangd.path": "${workspaceFolder}/clangd/bin/clangd.exe"
 }
