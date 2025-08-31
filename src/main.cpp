@@ -75,8 +75,7 @@ int main() {
 
         auto parent = etree(A);
 
-        auto S = schol(A);
-        auto L_err = chol(A, S); // numeric
+        auto L_err = chol(A); // numeric
 
         if (!L_err)
             std::cout
@@ -107,8 +106,7 @@ int main() {
 
         auto parent = etree(A);
 
-        auto S = schol(A);
-        auto L_err = chol(A, S); // numeric
+        auto L_err = chol(A); // numeric
 
         if (!L_err)
             std::cout
@@ -200,7 +198,7 @@ int main() {
                       << S << std::endl;
 
             // Factorize this supernode
-            auto result = factorize_supernode(start, end, P, S, L);
+            auto result = factorize_sn(start, end, P, S, L);
             if (!result) {
                 std::cerr << "Factorization failed: " << result.error() << "\n";
                 return 1;
@@ -244,6 +242,81 @@ int main() {
 
         std::cout << "Matrix L now:\n"
                   << L << std::endl;
+    }
+
+    {
+        // Build a tiny 4x4 SPD sparse matrix
+        // A = [ 4  1  0  0
+        //       1  3  1  0
+        //       0  1  3  1
+        //       0  0  1  2 ]
+        std::vector<int> ti = { 0, 0, 1, 1, 2, 2, 3 }; // row indices
+        std::vector<int> tj = { 0, 1, 1, 2, 2, 3, 3 }; // col indices
+        std::vector<double> tx = { 4, 1, 7, 1, 7, 1, 6 }; // values
+        int n = 4;
+
+        auto A = triplet_to_csc_matrix(ti, tj, tx, n);
+
+        auto L_err = chol_sn(A);
+
+        if (L_err.has_value())
+            std::cout << "Cholesky L:\n"
+                      << L_err.value() << std::endl;
+
+        else
+            std::cout << "Factorization failed" << L_err.error() << std::endl;
+    }
+
+    {
+        std::vector<std::vector<int>> pattern = {
+            { 0 }, // row 0
+            { 0, 1 }, // row 1
+            { 2 }, // row 2
+            { 2, 3 }, // row 3
+            { 4 }, // row 4
+            { 4, 5 }, // row 5
+            { 3, 4, 6 }, // row 6
+            { 0, 1, 2, 3, 5, 7 }, // row 7
+            { 0, 1, 5, 6, 8 } // row 8
+        };
+
+        csc_matrix<double, sym::upper> A = build_csc_matrix_from_pattern<double>(pattern);
+
+        std::cout << A << std::endl;
+
+        A.transpose();
+
+        std::cout << to_string(col_count(A, etree(A), post_order(etree(A)))) << std::endl;
+
+        const auto S = schol(A);
+
+        std::cout << S << std::endl;
+
+        const auto n = A.size();
+
+        std::vector<int> w(n, -1);
+        std::vector<int> s(n);
+        std::vector<double> x(n);
+
+        int top = ereach(A, 2, etree(A), s, w, x, n);
+
+        // The pattern of column 1 of L is in s[top..n-1]
+        std::cout << "Reach of Column 2:\n";
+
+        for (int idx = top; idx < n; ++idx) {
+            std::cout << s[idx] << " ";
+        }
+
+        std::cout << "\n\n";
+
+        std::vector<int> supernodes;
+
+        auto sn_id = compute_supernodes(S, supernodes);
+
+        std::cout << "supernode id " << to_string(sn_id) << std::endl
+                  << "supernode " << to_string(supernodes) << std::endl;
+
+        std::cout << "atree: " << to_string(atree(S, sn_id, supernodes)) << std::endl;
     }
 
     return 0;

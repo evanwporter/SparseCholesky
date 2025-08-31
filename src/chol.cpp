@@ -72,12 +72,16 @@ std::vector<int> compute_supernodes(const SChol& S, std::vector<int>& supernodes
         // sparsity structure below the diagonal. Since the principle of column
         // replication ensures that the sparsity pattern of column j is replicated
         // into column j + 1 if j + 1 is the parent of j
-        if (parent[j] == j + 1) {
+        if (parent[j - 1] == j) {
+            /// non zeros in the jth column
             int lenj = cp[j + 1] - cp[j];
+
+            /// non zeros in the j - 1 column
             int lenjm1 = cp[j] - cp[j - 1];
-            if (lenj == lenjm1 - 1) {
+
+            // -1 is to account for the diagonal
+            if (lenj == lenjm1 - 1)
                 same_pattern = true;
-            }
         }
 
         if (same_pattern) {
@@ -93,4 +97,40 @@ std::vector<int> compute_supernodes(const SChol& S, std::vector<int>& supernodes
 
     supernodes.push_back(n);
     return sn_id;
+}
+
+std::vector<int> atree(const SChol& S, const std::vector<int>& sn_id, const std::vector<int>& supernodes) {
+
+    /// #columns
+    const int n = static_cast<int>(S.parent.size());
+
+    /// #supernodes
+    const int ns = static_cast<int>(supernodes.size()) - 1;
+
+    assert((int)sn_id.size() == n);
+    assert(supernodes.front() == 0 && supernodes.back() == n);
+
+    std::vector<int> super_parent(ns, -1);
+
+    // Build parent relation for supernodes
+    for (int s = 0; s < ns; ++s) {
+        int start = supernodes[s];
+        int end = supernodes[s + 1]; // exclusive
+
+        for (int j = start; j < end; ++j) {
+            for (int p = S.cp[j]; p < S.cp[j + 1]; ++p) {
+                int row = S.rowind[p];
+                if (row >= end) { // strictly below diagonal block
+                    int t = sn_id[row]; // directly use super[j] mapping
+                    if (t != s) {
+                        if (super_parent[s] == -1 || t < super_parent[s]) {
+                            super_parent[s] = t;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return super_parent;
 }
