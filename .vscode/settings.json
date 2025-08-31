@@ -131,6 +131,7 @@
   },
   "cmake.configureArgs": [
 		"-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "-DCMAKE_TOOLCHAIN_FILE=C:/Users/evanw/vcpkg/scripts/buildsystems/vcpkg.cmake",
   ],
   "cmake.generator": "Ninja",
   "[cpp]": {

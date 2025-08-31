@@ -4,13 +4,22 @@
 #include <atomic>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <expected>
 #include <random>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
+
+extern "C" {
+#include <cblas.h>
+
+/// Computes the Cholesky factorization of a real symmetric positive definite matrix A.
+void dpotrf_(const char* uplo, const int* n, double* a, const int* lda, int* info);
+}
 
 #include "pcg_random.hpp"
 
@@ -21,6 +30,23 @@ enum class sym {
 };
 
 using elimination_tree = std::vector<int>;
+
+struct SChol {
+    /// elimination tree (size n)
+    std::vector<int> parent;
+
+    /// column pointers for L (size n+1)
+    std::vector<int> cp;
+
+    /// row indices for L (size nnz = cp.back())
+    std::vector<int> rowind;
+
+    /// number nonzeros in lower triangle
+    int lnz = 0; // nnz(L)
+
+    /// number nonzeros in upper triangle
+    int unz = 0;
+};
 
 template <typename T, sym S = sym::upper>
 class csc_matrix {
@@ -46,8 +72,13 @@ private:
 
 public:
     csc_matrix(int m, int n, int nzmax) :
-        n_(n), m_(m), nzmax_(nzmax),
-        p_(n + 1, 0), i_(nzmax), x_(nzmax, T(0)) {
+        n_(n),
+        m_(m),
+        nzmax_(nzmax),
+        p_(n + 1, 0),
+        i_(nzmax),
+        x_(nzmax, T(0)) {
+
         assert(m > 0 && n > 0 && nzmax > 0);
 
         if constexpr (S != sym::none) {
@@ -55,6 +86,19 @@ public:
             // enforce square for symmetric
             assert(m == n);
         }
+    }
+
+    /// Construct CSC matrix directly from symbolic analysis
+    csc_matrix(const SChol& schol)
+        requires(S != sym::none)
+        :
+        m_(schol.parent.size()),
+        n_(schol.parent.size()),
+        nzmax_(schol.cp.back()),
+        p_(schol.cp),
+        i_(schol.rowind),
+        x_(schol.cp.back(), T(0)) {
+        assert(m_ == n_);
     }
 
     // Constructor only available if Symmetric
@@ -100,6 +144,30 @@ public:
 
         // If we can't find it in the column pointers
         return T(0);
+    }
+
+    // TODO: merge [] and ()
+
+    // Access (i, j) with symmetry awareness.
+    T& operator()(int i, int j) {
+        assert(i >= 0 && i < m_ && j >= 0 && j < n_);
+
+        if constexpr (S == sym::upper) {
+            if (j < i)
+                std::swap(i, j);
+        } else if constexpr (S == sym::lower) {
+            if (i < j)
+                std::swap(i, j);
+        }
+
+        // Search for existing slot
+        for (int idx = p_[j]; idx < p_[j + 1]; ++idx) {
+            if (i_[idx] == i) {
+                return x_[idx];
+            }
+        }
+
+        throw std::exception("");
     }
 
     /// Transpose matrix
@@ -452,20 +520,6 @@ std::vector<int> col_count(const csc_matrix<T>& A, const std::vector<int>& paren
     return colcount; // colcount[j] = nnz in column j of L (incl. diagonal)
 }
 
-struct SChol {
-    /// elimination tree (size n)
-    std::vector<int> parent;
-
-    /// column pointers for L (size n+1)
-    std::vector<int> cp;
-
-    /// number nonzeros in lower triangle
-    int lnz = 0; // nnz(L)
-
-    /// number nonzeros in upper triangle
-    int unz = 0;
-};
-
 template <typename T>
 SChol schol(const csc_matrix<T, sym::upper>& A) {
     const int n = static_cast<int>(A.size());
@@ -478,7 +532,7 @@ SChol schol(const csc_matrix<T, sym::upper>& A) {
     const auto post = post_order(S.parent);
 
     // column counts for L (includes diagonal)
-    auto colcount = col_count(A, S.parent, post);
+    const auto colcount = col_count(A, S.parent, post);
 
     // column pointers
     // done by accumulating the column count
@@ -489,6 +543,42 @@ SChol schol(const csc_matrix<T, sym::upper>& A) {
         nz += colcount[j];
     }
     S.cp[n] = nz;
+
+    // find row structure
+
+    S.rowind.resize(nz);
+
+    std::vector<int> s(n), w(n, -1);
+    std::vector<T> x(n, T(0));
+
+    for (int j = 0; j < n; ++j) {
+        const int needed = S.cp[j + 1] - S.cp[j]; // how many rows this col must have
+        int p = S.cp[j];
+        int filled = 0;
+
+        // get reach set
+        int top = ereach(A, j, S.parent, s, w, x, n);
+
+        // always include diagonal first
+        S.rowind[p++] = j;
+        filled++;
+
+        // take rows from reach set until we've reached the col count
+        for (int t = top; t < n && filled < needed; ++t) {
+            int row = s[t];
+
+            if (row > j) {
+                S.rowind[p++] = row;
+                filled++;
+            }
+        }
+
+        // sort for consistency
+        std::sort(S.rowind.begin() + S.cp[j], S.rowind.begin() + p);
+
+        assert(filled == needed);
+        assert(p == S.cp[j + 1]);
+    }
 
     S.lnz = nz;
 
@@ -569,7 +659,7 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
 
     for (auto lvl : levels) {
 
-#pragma omp parallel for schedule(dynamic) // or guided
+#pragma omp parallel for schedule(dynamic)
 
         for (int idx = 0; idx < lvl.size(); ++idx) {
 
@@ -684,4 +774,288 @@ csc_matrix<T, sym::upper> random_sparse(int n, double density = 0.25, bool posit
     }
 
     return triplet_to_csc_matrix(ti, tj, tx, n);
+}
+
+template <typename T>
+std::vector<int> supernode_rows(const csc_matrix<T, sym::upper>& A, const std::vector<int>& parent, int start, int end) {
+
+    int n = A.size();
+    std::vector<int> s(n), w(n, -1);
+    std::vector<T> x(n, T(0));
+
+    std::vector<int> rows;
+    for (int k = start; k < end; ++k) {
+        int top = ereach(A, k, parent, s, w, x, n);
+        for (int t = top; t < n; ++t) {
+            rows.push_back(s[t]);
+        }
+    }
+
+    // we take the union of all rows in the supernodes
+    std::sort(rows.begin(), rows.end());
+    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+
+    return rows;
+}
+
+template <typename T>
+class panel {
+private:
+    /// column-major dense block
+    std::vector<T> data;
+
+    /// the range of columns we want to pull from
+    /// since the columns are contiguous
+    std::pair<int, int> column_range;
+
+    /// global row indices (mapping back to CSC rows)
+    std::vector<int> rows_;
+
+    /// dimensions
+    const size_t m_ = 0; // # rows in dense panel
+    const size_t n_ = 0; // # cols in dense panel
+
+public:
+    panel(std::vector<int> rows, int start, int end) :
+        m_(rows.size()), n_(end - start),
+        data(rows.size() * (end - start), T(0)),
+        rows_(rows), column_range({ start, end }) { }
+
+    int nrows() const { return static_cast<int>(m_); }
+    int ncols() const { return static_cast<int>(n_); }
+
+    /// access element (col-major layout)
+    T& operator()(int r, int c) { return data[c * m_ + r]; }
+    const T& operator()(int r, int c) const { return data[c * m_ + r]; }
+
+    /// data getter helpers
+    T* data_ptr() { return data.data(); }
+    const T* data_ptr() const { return data.data(); }
+
+    std::vector<int>& get_rows() { return rows_; }
+    const std::vector<int>& get_rows() const { return rows_; }
+
+    const std::pair<int, int> get_column_range() const { return column_range; }
+};
+
+/**
+ * @brief Extract dense panel from a collection of supernodes
+ * @param L
+ * @param start
+ * @param end
+ * @return vector<T>
+ */
+template <typename T, sym S>
+panel<T> extract_panel(const csc_matrix<T, S>& L, int start, int end, const std::vector<int>& row_index) {
+    // filter out eliminated rows (those < start)
+    std::vector<int> filtered_rows;
+    filtered_rows.reserve(row_index.size());
+    for (int r : row_index) {
+        if (r >= start) {
+            filtered_rows.push_back(r);
+        }
+    }
+
+    panel<T> P(filtered_rows, start, end);
+
+    const auto& Lp = L.p();
+    const auto& Li = L.i();
+    const auto& Lx = L.x();
+
+    const int m = static_cast<int>(L.rows());
+    const int nr = static_cast<int>(filtered_rows.size());
+
+    // Global row to local row lookup
+    std::vector<int> row2local(m, -1);
+    for (int r = 0; r < nr; ++r) {
+        row2local[filtered_rows[r]] = r;
+    }
+
+    // Scatter each column `j` into dense panel
+    for (int j = start; j < end; ++j) {
+        int local_col = j - start;
+
+        for (int p = Lp[j]; p < Lp[j + 1]; ++p) {
+            int row = Li[p];
+            int local_row = row2local[row];
+
+            if (local_row != -1) {
+                P(local_row, local_col) = Lx[p];
+            }
+        }
+    }
+
+    return P;
+}
+
+struct UpdateBlock {
+    /// rows affected by the update (global indices), these are the rows "below" the supernode
+    std::vector<int> rows;
+
+    /// dense lower-symmetric matrix in column-major (mb x mb), representing -(L_{rect} * L_{rect}^T)
+    std::vector<double> C;
+
+    int ld = 0; // leading dimension for C (== mb)
+};
+
+/**
+ * @brief Scatter one dense panel column back into global CSC L
+ * @param j column index in L
+ * @param rows row indices of the panel in L
+ * @param Pcol pointer to dense panel column (length m, ld=m)
+ */
+template <typename T>
+inline void scatter_panel_column_into_L(csc_matrix<T, sym::lower>& L, int j, const std::vector<int>& rows, const T* Pcol) {
+    // For each row in the panel, directly update L(row, j)
+    for (std::size_t r = 0; r < rows.size(); ++r) {
+        if (Pcol[r] != 0) {
+            const int row = rows[r];
+            L(row, j) = Pcol[r];
+        }
+    }
+}
+
+/// Apply the trailing update block C into the global sparse matrix A.
+/// A is stored in CSC, upper-triangular only.
+template <typename T>
+void apply_update(csc_matrix<T, sym::upper>& A, const UpdateBlock& upd) {
+    const int mb = upd.ld;
+    if (mb <= 0)
+        return;
+
+    const auto& rows = upd.rows;
+
+    for (int jj = 0; jj < mb; ++jj) {
+        const int col = rows[jj];
+        for (int ii = jj; ii < mb; ++ii) {
+            const int row = rows[ii];
+
+            const int idx = jj * mb + ii;
+
+            if (upd.C[idx] != 0) {
+                // add contribution into A(row, col)
+                A(row, col) += upd.C[jj * mb + ii]; // C is column-major
+            }
+        }
+    }
+}
+
+/**
+ * @brief factorize a supernode
+ * @param start
+ * @param end supernode columns [start, end)
+ * @param P assembled dense panel (col-major)
+ * @param S symbolic output (cp)
+ * @param L global L to update in-place
+ */
+template <typename T>
+std::expected<UpdateBlock, std::string> factorize_supernode(int start, int end, panel<T>& P, const SChol& S, csc_matrix<T, sym::lower>& L) {
+    static_assert(std::is_same<double, double>::value, "This kernel is for double.");
+
+    /// super node width (in columns)
+    const int w = end - start;
+
+    /// # rows in panel
+    const int m = P.nrows();
+
+    /// # below diagonal rows
+    const int mb = m - w;
+
+    const auto& rows = P.get_rows();
+
+    if (w <= 0)
+        return std::unexpected("Empty supernode.");
+
+    // L_{diag}
+    // We find `L_{diag}` by performing the Cholesky on `A_{diag}`
+    {
+        char uplo = 'L';
+
+        /// order of the matrix (supernode width)
+        int nblk = w;
+
+        /// leading dimension of the panel (rows)
+        /// lda >= nblk
+        int lda = m;
+
+        int info = 0;
+
+        // performs cholesky factorization on L_{diag}
+        dpotrf_(&uplo, &nblk, P.data_ptr(), &lda, &info);
+
+        if (info != 0) {
+            if (info < 0) {
+                return std::unexpected(
+                    "dpotrf_ failed: the " + std::to_string(-info) + "-th argument had an illegal value.");
+            } else {
+                // info > 0: breakdown at diagonal element `info`
+                std::stringstream ss;
+                ss << "dpotrf_ failed in supernode [" << start << "," << end
+                   << "): leading minor of order " << info
+                   << " is not positive definite.";
+                // Optionally: dump the diagonal block for debugging
+                ss << " Diagonal entries: ";
+                for (int d = 0; d < nblk; ++d) {
+                    ss << P(d, d) << " ";
+                }
+                return std::unexpected(ss.str());
+            }
+        }
+    }
+
+    // L_{rect}
+    /// We find `L_{rect}` using a triangular solve on the equation
+    /// `L_{rect} = A_{rect} L_{diag}^{-T}`
+    if (mb > 0) {
+        const double* L_diag = P.data_ptr(); // (w x w), ld = m
+        double* A_rect = P.data_ptr() + w; // (mb x w), ld = m  (row offset = w)
+
+        cblas_dtrsm(CblasColMajor,
+                    CblasRight, // B := B * inv(op(A))
+                    CblasLower, // A is lower (L11)
+                    CblasTrans, // op(A) = L11^T
+                    CblasNonUnit,
+                    /*m=*/mb, // rows of B
+                    /*n=*/w, // cols of B
+                    /*alpha=*/1.0,
+                    L_diag,
+                    /*lda=*/m,
+                    A_rect,
+                    /*ldb=*/m);
+    }
+
+    // Scatter both diagonal & rectangular pieces back into L's CSC columns
+    for (int j = start; j < end; ++j) {
+        const int cj = j - start;
+
+        /// Address of column `j` in panel
+        const auto* Pcol = P.data_ptr() + cj * m;
+
+        scatter_panel_column_into_L(L, j, rows, Pcol);
+    }
+
+    // Build the trailing update: A_{off} := A_{off} - L_{rect} * L_{rect}^T (lower, dense)
+    UpdateBlock upd;
+    upd.ld = std::max(0, mb);
+
+    if (mb > 0) {
+        upd.rows.assign(rows.begin() + w, rows.end()); // rows below the supernode
+        upd.C.assign(static_cast<size_t>(mb) * mb, 0.0);
+
+        const double* L_rect = P.data_ptr() + w; // (mb x w), ld = m
+
+        // C := -1 * L_{rect} * L_{rect}^T + 0*C
+        cblas_dsyrk(CblasColMajor, CblasLower,
+                    CblasNoTrans, // L21 is mb x w
+                    /*N=*/mb,
+                    /*K=*/w,
+                    /*alpha=*/-1.0,
+                    L_rect,
+                    /*lda=*/m,
+                    /*beta=*/0.0,
+                    upd.C.data(),
+                    /*ldc=*/mb);
+    }
+
+    return upd;
 }

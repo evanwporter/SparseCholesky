@@ -11,6 +11,7 @@ std::vector<std::vector<int>> compute_levels(const std::vector<int>& parent) {
     for (int j = 0; j < n; ++j) {
         if (depth[j] != -1)
             continue;
+
         // climb to a known depth or root
         int v = j;
         std::vector<int> path;
