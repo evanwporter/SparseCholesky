@@ -5,7 +5,7 @@
 
 // parent[j] = parent of j, or -1 if root
 std::vector<std::vector<int>> compute_levels(const std::vector<int>& parent) {
-    const int n = static_cast<int>(parent.size());
+    const auto n = parent.size();
     std::vector<int> depth(n, -1);
 
     for (int j = 0; j < n; ++j) {
@@ -39,8 +39,8 @@ std::vector<std::vector<int>> compute_levels(const std::vector<int>& parent) {
     return levels;
 }
 
-std::vector<int> compute_supernodes(const SChol& S, std::vector<int>& supernodes) {
-    const int n = static_cast<int>(S.parent.size());
+std::vector<int> compute_supernodes(const SChol& S, std::vector<std::size_t>& supernodes) {
+    const auto n = S.parent.size();
     const auto& parent = S.parent;
     const auto& cp = S.cp; // column pointers
 
@@ -99,13 +99,13 @@ std::vector<int> compute_supernodes(const SChol& S, std::vector<int>& supernodes
     return sn_id;
 }
 
-std::vector<int> atree(const SChol& S, const std::vector<int>& sn_id, const std::vector<int>& supernodes) {
+std::vector<int> atree(const SChol& S, const std::vector<int>& sn_id, const std::vector<std::size_t>& supernodes) {
 
     /// #columns
-    const int n = static_cast<int>(S.parent.size());
+    const auto n = S.parent.size();
 
     /// #supernodes
-    const int ns = static_cast<int>(supernodes.size()) - 1;
+    const auto ns = supernodes.size() - 1;
 
     assert((int)sn_id.size() == n);
     assert(supernodes.front() == 0 && supernodes.back() == n);
@@ -114,14 +114,14 @@ std::vector<int> atree(const SChol& S, const std::vector<int>& sn_id, const std:
 
     // Build parent relation for supernodes
     for (int s = 0; s < ns; ++s) {
-        int start = supernodes[s];
-        int end = supernodes[s + 1]; // exclusive
+        const auto start = supernodes[s];
+        const auto end = supernodes[s + 1]; // exclusive
 
-        for (int j = start; j < end; ++j) {
-            for (int p = S.cp[j]; p < S.cp[j + 1]; ++p) {
+        for (auto j = start; j < end; ++j) {
+            for (auto p = S.cp[j]; p < S.cp[j + 1]; ++p) {
                 int row = S.rowind[p];
-                if (row >= end) { // strictly below diagonal block
-                    int t = sn_id[row]; // directly use super[j] mapping
+                if (row >= end) {
+                    int t = sn_id[row];
                     if (t != s) {
                         if (super_parent[s] == -1 || t < super_parent[s]) {
                             super_parent[s] = t;

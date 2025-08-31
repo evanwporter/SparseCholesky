@@ -42,10 +42,10 @@ struct SChol {
     std::vector<int> rowind;
 
     /// number nonzeros in lower triangle
-    int lnz = 0; // nnz(L)
+    std::size_t lnz = 0;
 
     /// number nonzeros in upper triangle
-    int unz = 0;
+    std::size_t unz = 0;
 };
 
 template <typename T, sym S = sym::upper>
@@ -71,7 +71,7 @@ private:
     std::vector<T> x_;
 
 public:
-    csc_matrix(int m, int n, int nzmax) :
+    csc_matrix(std::size_t m, std::size_t n, int nzmax) :
         n_(n),
         m_(m),
         nzmax_(nzmax),
@@ -102,7 +102,7 @@ public:
     }
 
     // Constructor only available if Symmetric
-    csc_matrix(int n, int nzmax)
+    csc_matrix(std::size_t n, std::size_t nzmax)
         requires(S != sym::none)
         :
         m_(n), n_(n), nzmax_(nzmax),
@@ -149,7 +149,7 @@ public:
     // TODO: merge [] and ()
 
     // Access (i, j) with symmetry awareness.
-    T& operator()(int i, int j) {
+    T& operator()(std::size_t i, std::size_t j) {
         assert(i >= 0 && i < m_ && j >= 0 && j < n_);
 
         if constexpr (S == sym::upper) {
@@ -216,16 +216,15 @@ public:
     }
 };
 
-/// Convert triplet format to symmetric positive definite (SPD) matrix
+/**
+ * @brief Convert triplet format to symmetric positive definite (SPD) matrix
+ * @param ti row indeices
+ * @param tj column indices
+ * @param tx values
+ * @param n size of matrix (`nxn`)
+ */
 template <typename T>
 csc_matrix<T, sym::upper> triplet_to_csc_matrix(const std::vector<int>& ti, const std::vector<int>& tj, const std::vector<T>& tx, int n) {
-    /**
-     * @brief Convert triplet format to symmetric positive definite (SPD) matrix
-     * @param ti row indeices
-     * @param tj column indices
-     * @param tx values
-     */
-
     assert(ti.size() == tj.size() && tj.size() == tx.size());
 
     using Entry = std::tuple<int, int, T>; // (row, col, value)
@@ -287,8 +286,12 @@ csc_matrix<T, sym::upper> triplet_to_csc_matrix(const std::vector<int>& ti, cons
     return A;
 }
 
-/// Compute the elimination tree of an SPD matrix (upper triangle stored).
-/// Returns a vector<int> of size n, where parent[j] is the parent of column j.
+/**
+ * @brief Compute the elimination tree of an SPD matrix.
+ *
+ * @param A SPD matrix to compute the elimination tree of.
+ * @return elimination_tree size n, where `parent[j]` is the parent of column `j`
+ */
 template <typename T>
 elimination_tree etree(const csc_matrix<T, sym::upper>& A) {
     const int n = static_cast<int>(A.size());
@@ -349,15 +352,15 @@ csc_matrix<T, sym::upper> build_csc_matrix_from_pattern(const std::vector<std::v
     return triplet_to_csc_matrix(ti, tj, tx, n);
 }
 
-/// Iterative DFS used by postorder
-/// Taken from SuiteSparse (Dr. Tim Davis)
+/**
+ * @brief Iterative DFS used by postorder
+ * @note Taken from SuiteSparse (Dr. Tim Davis)
+ *
+ * @param next sibling links
+ * @param post output post order
+ * @param stack temporary stach (size >= n)
+ */
 static int tdfs(int root, int k, std::vector<int>& head, const std::vector<int>& next, std::vector<int>& post, std::vector<int>& stack) {
-    /**
-     * @param next sibling links
-     * @param post output posterorder
-     * @param stack temporary stack (size >= n)
-     */
-
     int top = 0;
     stack[0] = root;
     while (top >= 0) {
@@ -374,16 +377,24 @@ static int tdfs(int root, int k, std::vector<int>& head, const std::vector<int>&
     return k;
 }
 
-// Postorder of a forest given parent[] (parent[j] == -1 for roots).
-// Matches cs_post sibling ordering by linking children while scanning j=n-1..0.
+/**
+ * @brief Postorder of a forest given parent[] (parent[j] == -1 for roots).
+ * @note Taken from SuiteSparse (Dr. Tim Davis)
+ */
 inline std::vector<int> post_order(const elimination_tree& parent) {
     const int n = static_cast<int>(parent.size());
     assert(n >= 0);
 
     std::vector<int> post(n, -1);
-    std::vector<int> head(n, -1); // head[v] = youngest child of v (singly-linked list)
-    std::vector<int> next(n, -1); // next[s] = older sibling of s (in the list of parent[s])
-    std::vector<int> stack(n, -1); // DFS stack
+
+    /// head[v] = youngest child of v (singly-linked list)
+    std::vector<int> head(n, -1);
+
+    /// next[s] = older sibling of s (in the list of parent[s])
+    std::vector<int> next(n, -1);
+
+    /// DFS stack
+    std::vector<int> stack(n, -1);
 
     // Build child lists so that siblings are visited in the same order as cs_post:
     // traverse j from n-1 down to 0, push j to front of parent[j]'s list.
@@ -405,7 +416,11 @@ inline std::vector<int> post_order(const elimination_tree& parent) {
     return post; // size n, a permutation of 0..n-1
 }
 
-// Transpose (pattern only) of your CSC upper-tri matrix A
+/**
+ * @brief Transpose (pattern only) of the matrix `A`
+ *
+ * @param A matrix to be transposed
+ */
 template <typename T>
 static void transpose_pattern(const csc_matrix<T>& A, std::vector<int>& ATp, std::vector<int>& ATi) {
     const int n = static_cast<int>(A.size());
@@ -463,6 +478,8 @@ static inline void process_edge(
 
 /**
  * @brief Column counts for Cholesky (ata = 0 path of cs_counts)
+ *
+ * @return `colcount[j] = nnz` in column `j` of `L` (incl. diagonal)
  */
 template <typename T>
 std::vector<int> col_count(const csc_matrix<T>& A, const std::vector<int>& parent, const std::vector<int>& post) {
@@ -522,6 +539,9 @@ std::vector<int> col_count(const csc_matrix<T>& A, const std::vector<int>& paren
     return colcount; // colcount[j] = nnz in column j of L (incl. diagonal)
 }
 
+/**
+ * @brief Find the symbolic cholesky factorization
+ */
 template <typename T>
 SChol schol(const csc_matrix<T, sym::upper>& A) {
     const int n = static_cast<int>(A.size());
@@ -540,7 +560,7 @@ SChol schol(const csc_matrix<T, sym::upper>& A) {
     std::vector<int> rowind_all; // will hold all row indices concatenated
 
     for (int j = 0; j < n; ++j) {
-        int top = ereach(A, j, S.parent, s, w, x, n);
+        const auto top = ereach(A, j, S.parent, s, w, x, n);
 
         // Start a new column
         int col_start = static_cast<int>(rowind_all.size());
@@ -549,7 +569,7 @@ SChol schol(const csc_matrix<T, sym::upper>& A) {
         rowind_all.push_back(j);
 
         // Include reach set
-        for (int t = top; t < n; ++t) {
+        for (auto t = top; t < n; ++t) {
             int row = s[t];
             if (row > j) { // enforce lower part only
                 rowind_all.push_back(row);
@@ -566,7 +586,7 @@ SChol schol(const csc_matrix<T, sym::upper>& A) {
     // Finalize row indices
     S.rowind = std::move(rowind_all);
 
-    const int nz = static_cast<int>(S.rowind.size());
+    const auto nz = S.rowind.size();
 
     S.lnz = nz;
 
@@ -576,43 +596,65 @@ SChol schol(const csc_matrix<T, sym::upper>& A) {
     return S;
 }
 
-// Compute the nonzero pattern of column k of L.
-// On return, s[top..n-1] contains the row indices (in topological order).
-// Returns new top.
-// n = A.size()
-// parent = etree(A)
-// s, w, x should be preallocated length n.
+namespace internal {
+    // Compute the nonzero pattern of column k of L.
+    // On return, s[top..n-1] contains the row indices (in topological order).
+    // Returns new top.
+    // n = A.size()
+    // parent = etree(A)
+    // s, w, x should be preallocated length n.
+
+    template <typename T, typename Updater>
+    std::size_t ereach_impl(const csc_matrix<T>& A, std::size_t k, const std::vector<int>& parent, std::vector<int>& s, std::vector<int>& w, std::size_t top, Updater&& update) {
+
+        const auto& Ap = A.p();
+        const auto& Ai = A.i();
+
+        for (int p = Ap[k]; p < Ap[k + 1]; ++p) {
+            int i = Ai[p];
+            if (i > k)
+                continue; // upper part only
+
+            update(p, i);
+
+            std::vector<int> path; // stack
+            while (i != -1 && w[i] != k) {
+                path.push_back(i);
+                w[i] = static_cast<int>(k);
+                i = parent[i];
+            }
+
+            while (!path.empty()) {
+                s[--top] = path.back();
+                path.pop_back();
+            }
+        }
+
+        return top;
+    }
+}
 
 /**
- * @brief Compute the nonzero pattern of column k of L.
+ * @brief Compute the nonzero pattern of column k of L (has numerical accumulation)
  * @param k column
  * @param parent elimination tree
+ * @param top number of columns/rows
  */
 template <typename T>
-int ereach(const csc_matrix<T>& A, int k, const std::vector<int>& parent, std::vector<int>& s, std::vector<int>& w, std::vector<T>& x, int top) {
-
-    const auto& Ap = A.p();
-    const auto& Ai = A.i();
+std::size_t ereach(const csc_matrix<T>& A, std::size_t k, const std::vector<int>& parent, std::vector<int>& s, std::vector<int>& w, std::vector<T>& x, std::size_t top) {
     const auto& Ax = A.x();
+    return internal::ereach_impl(A, k, parent, s, w, top, [&](int p, int i) { x[i] = Ax[p]; });
+}
 
-    for (int p = Ap[k]; p < Ap[k + 1]; ++p) {
-        int i = Ai[p];
-        if (i > k)
-            continue; // upper part only
-        x[i] = Ax[p];
-
-        std::vector<int> path; // local stack
-        while (i != -1 && w[i] != k) {
-            path.push_back(i);
-            w[i] = k;
-            i = parent[i];
-        }
-        while (!path.empty()) {
-            s[--top] = path.back();
-            path.pop_back();
-        }
-    }
-    return top;
+/**
+ * @brief Compute the nonzero pattern of column k of L (purely symbolic)
+ * @param k column
+ * @param parent elimination tree
+ * @param top number of columns/rows
+ */
+template <typename T>
+std::size_t ereach(const csc_matrix<T>& A, std::size_t k, const std::vector<int>& parent, std::vector<int>& s, std::vector<int>& w, std::size_t top) {
+    return internal::ereach_impl(A, k, parent, s, w, top, [](int, int) { });
 }
 
 std::vector<std::vector<int>> compute_levels(const std::vector<int>& parent);
@@ -625,14 +667,14 @@ std::vector<std::vector<int>> compute_levels(const std::vector<int>& parent);
  */
 template <typename T>
 std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, sym::upper>& A) {
-    const int n = static_cast<int>(A.size());
+    const std::size_t n = A.size();
 
     const auto parent = etree(A);
 
-    // postorder of the etree
+    /// postorder of the etree
     const auto post = post_order(parent);
 
-    // column counts for L (includes diagonal)
+    /// column counts for L (includes diagonal)
     const auto colcount = col_count(A, parent, post);
 
     /// column pointers
@@ -647,8 +689,8 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
 
     cp[n] = nz;
 
-    assert(static_cast<int>(cp.size()) == n + 1);
-    assert(static_cast<int>(parent.size()) == n);
+    assert(cp.size() == n + 1);
+    assert(parent.size() == n);
 
     // Allocate result matrix `L` (lower triangular, stored in CSC form)
     csc_matrix<T, sym::lower> L(n, cp.back());
@@ -684,7 +726,7 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
             w[k] = k;
 
             /// `ereach` fills `s[top..n-1]` with nonzero pattern and accumulates `x[]`
-            int top = ereach(A, k, parent, s, w, x, n);
+            const auto top = ereach(A, k, parent, s, w, x, n);
 
             /// d is the diagonal accumulator.
             /// At the beginning its assigned $A_kk$.
@@ -693,8 +735,10 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
             T d = x[k];
             x[k] = T(0);
 
-            for (; top < n; top++) {
-                int i = s[top];
+            for (auto t = top; t < n; t++) {
+
+                // row `i`
+                int i = s[t];
 
                 const T Lii = Lx[L.p()[i]]; // first entry in col i is diagonal
                 assert(Lii != T(0));
@@ -738,13 +782,97 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
     return L;
 }
 
+template <typename T>
+csc_matrix<T, sym::lower> s_chol(const csc_matrix<T, sym::upper>& A) {
+    const auto n = A.size();
+
+    const auto parent = etree(A);
+
+    /// postorder of the etree
+    const auto post = post_order(parent);
+
+    /// column counts for `L` (includes diagonal)
+    const auto colcount = col_count(A, parent, post);
+
+    /// column pointers
+    std::vector<int> cp(n + 1);
+
+    // column pointers are created by accumulating the column count
+    int nz = 0;
+    for (int j = 0; j < n; ++j) {
+        cp[j] = nz;
+        nz += colcount[j];
+    }
+
+    cp[n] = nz;
+
+    assert(cp.size() == n + 1);
+    assert(parent.size() == n);
+
+    // Allocate result matrix `L` (lower triangular, stored in CSC form)
+    csc_matrix<T, sym::lower> L(n, cp.back());
+    L.p() = cp;
+
+    auto& Li = L.i();
+
+    /// `c[i]` holds the next free slot for column i
+    std::vector<std::atomic<int>> c(n);
+    for (int j = 0; j < n; ++j) {
+        c[j].store(cp[j], std::memory_order_relaxed);
+    }
+
+    const auto levels = compute_levels(parent);
+
+    for (auto lvl : levels) {
+
+#pragma omp parallel for schedule(dynamic)
+
+        for (int idx = 0; idx < lvl.size(); ++idx) {
+
+            /// `k` is the index of the column that we want to factor
+            const auto j = lvl[idx];
+
+            // Work arrays
+            std::vector<int> s(n, -1);
+            std::vector<int> w(n, -1);
+            std::vector<T> x(n, T(0));
+
+            L.p()[j] = c[j]; // keep consistency with CSparse
+            x[j] = T(0);
+            w[j] = j;
+
+            /// `ereach` fills `s[top..n-1]` with nonzero pattern and accumulates `x[]`
+            const auto top = ereach(A, j, parent, s, w, x, n);
+
+            for (auto t = top; t < n; ++t) {
+                int i = s[t];
+
+                // Append entry L(k,i) into column i
+                int q = c[i].fetch_add(1, std::memory_order_acq_rel);
+                Li[q] = j;
+            }
+
+            // Place diagonal entry L(k,k)
+            int q = c[j].fetch_add(1, std::memory_order_acq_rel);
+            Li[q] = j;
+        }
+    }
+
+    // finalize last column pointer
+    L.p()[n] = cp[n];
+
+    std::fill(L.x().begin(), L.x().end(), T(1));
+
+    return L;
+}
+
 /**
  * @brief Group columns into supernodes.
  * @param S The symbolic cholesky
  * @param supernodes gets filled with the start indices of each supernode.
  * @return std::vector<int> size `n`; where super[j] is the supernode id of column j
  */
-std::vector<int> compute_supernodes(const SChol& S, std::vector<int>& supernodes);
+std::vector<int> compute_supernodes(const SChol& S, std::vector<std::size_t>& supernodes);
 
 /**
  * @brief Generate a random symmetric sparse matrix in CSC format (upper triangle stored).
@@ -787,17 +915,20 @@ csc_matrix<T, sym::upper> random_sparse(int n, double density = 0.25, bool posit
     return triplet_to_csc_matrix(ti, tj, tx, n);
 }
 
+/**
+ * @brief Compute the rows in a supernode
+ */
 template <typename T>
-std::vector<int> supernode_rows(const csc_matrix<T, sym::upper>& A, const std::vector<int>& parent, int start, int end) {
+std::vector<int> supernode_rows(const csc_matrix<T, sym::upper>& A, const std::vector<int>& parent, std::size_t start, std::size_t end) {
 
-    int n = A.size();
+    const auto n = A.size();
     std::vector<int> s(n), w(n, -1);
     std::vector<T> x(n, T(0));
 
     std::vector<int> rows;
-    for (int k = start; k < end; ++k) {
-        int top = ereach(A, k, parent, s, w, x, n);
-        for (int t = top; t < n; ++t) {
+    for (auto k = start; k < end; ++k) {
+        const auto top = ereach(A, k, parent, s, w, n);
+        for (auto t = top; t < n; ++t) {
             rows.push_back(s[t]);
         }
     }
@@ -817,7 +948,7 @@ private:
 
     /// the range of columns we want to pull from
     /// since the columns are contiguous
-    std::pair<int, int> column_range;
+    std::pair<std::size_t, std::size_t> column_range;
 
     /// global row indices (mapping back to CSC rows)
     std::vector<int> rows_;
@@ -829,17 +960,17 @@ private:
     const size_t n_ = 0;
 
 public:
-    panel(std::vector<int> rows, int start, int end) :
+    panel(std::vector<int> rows, std::size_t start, std::size_t end) :
         m_(rows.size()), n_(end - start),
         data(rows.size() * (end - start), T(0)),
         rows_(rows), column_range({ start, end }) { }
 
-    int nrows() const { return static_cast<int>(m_); }
-    int ncols() const { return static_cast<int>(n_); }
+    std::size_t nrows() const { return m_; }
+    std::size_t ncols() const { return n_; }
 
     /// access element (col-major layout)
-    T& operator()(int r, int c) { return data[c * m_ + r]; }
-    const T& operator()(int r, int c) const { return data[c * m_ + r]; }
+    T& operator()(std::size_t r, std::size_t c) { return data[c * m_ + r]; }
+    const T& operator()(std::size_t r, std::size_t c) const { return data[c * m_ + r]; }
 
     /// data getter helpers
     T* data_ptr() { return data.data(); }
@@ -848,7 +979,7 @@ public:
     std::vector<int>& get_rows() { return rows_; }
     const std::vector<int>& get_rows() const { return rows_; }
 
-    const std::pair<int, int> get_column_range() const { return column_range; }
+    const std::pair<std::size_t, std::size_t> get_column_range() const { return column_range; }
 };
 
 /**
@@ -859,7 +990,7 @@ public:
  * @return vector<T>
  */
 template <typename T, sym S>
-panel<T> extract_panel(const csc_matrix<T, S>& L, int start, int end, const std::vector<int>& row_index) {
+panel<T> extract_panel(const csc_matrix<T, S>& L, std::size_t start, std::size_t end, const std::vector<int>& row_index) {
     // filter out eliminated rows (those < start)
     std::vector<int> filtered_rows;
     filtered_rows.reserve(row_index.size());
@@ -885,15 +1016,15 @@ panel<T> extract_panel(const csc_matrix<T, S>& L, int start, int end, const std:
     }
 
     // Scatter each column `j` into dense panel
-    for (int j = start; j < end; ++j) {
-        int local_col = j - start;
+    for (auto j = start; j < end; ++j) {
+        auto local_col = j - start;
 
         for (int p = Lp[j]; p < Lp[j + 1]; ++p) {
             int row = Li[p];
-            int local_row = row2local[row];
+            std::size_t local_row = row2local[row];
 
             if (local_row != -1) {
-                P(local_row, local_col) = Lx[p];
+                P(local_row, local_col) = static_cast<int>(Lx[p]);
             }
         }
     }
@@ -918,7 +1049,7 @@ struct UpdateBlock {
  * @param Pcol pointer to dense panel column (length m, ld=m)
  */
 template <typename T>
-inline void scatter_panel_column_into_L(csc_matrix<T, sym::lower>& L, int j, const std::vector<int>& rows, const T* Pcol) {
+inline void scatter_panel_column_into_L(csc_matrix<T, sym::lower>& L, std::size_t j, const std::vector<int>& rows, const T* Pcol) {
     // For each row in the panel, directly update L(row, j)
     for (std::size_t r = 0; r < rows.size(); ++r) {
         if (Pcol[r] != 0) {
@@ -958,7 +1089,7 @@ void apply_update(csc_matrix<T, sym::upper>& A, const UpdateBlock& upd) {
 /**
  * @brief Compute the assembly tree
  */
-std::vector<int> atree(const SChol& S, const std::vector<int>& sn_id, const std::vector<int>& supernodes);
+std::vector<int> atree(const SChol& S, const std::vector<int>& sn_id, const std::vector<std::size_t>& supernodes);
 
 /**
  * @brief Factorize a supernode
@@ -969,16 +1100,16 @@ std::vector<int> atree(const SChol& S, const std::vector<int>& sn_id, const std:
  * @param L global L to update in-place
  */
 template <typename T>
-std::expected<UpdateBlock, std::string> factorize_sn(int start, int end, panel<T>& P, const SChol& S, csc_matrix<T, sym::lower>& L) {
+std::expected<UpdateBlock, std::string> factorize_sn(std::size_t start, std::size_t end, panel<T>& P, const SChol& S, csc_matrix<T, sym::lower>& L) {
 
     /// super node width (in columns)
-    const int w = end - start;
+    const auto w = end - start;
 
-    /// # rows in panel
-    const int m = P.nrows();
+    /// #rows in panel
+    const auto m = P.nrows();
 
-    /// # below diagonal rows
-    const int mb = m - w;
+    /// #below diagonal rows
+    const auto mb = m - w;
 
     const auto& rows = P.get_rows();
 
@@ -991,11 +1122,11 @@ std::expected<UpdateBlock, std::string> factorize_sn(int start, int end, panel<T
         char uplo = 'L';
 
         /// order of the matrix (supernode width)
-        int nblk = w;
+        auto nblk = static_cast<int>(w);
 
         /// leading dimension of the panel (rows)
         /// lda >= nblk
-        int lda = m;
+        auto lda = static_cast<int>(m);
 
         int info = 0;
 
@@ -1034,18 +1165,18 @@ std::expected<UpdateBlock, std::string> factorize_sn(int start, int end, panel<T
                     CblasLower, // A is lower (L11)
                     CblasTrans, // op(A) = L11^T
                     CblasNonUnit,
-                    /*m=*/mb, // rows of B
-                    /*n=*/w, // cols of B
+                    static_cast<int>(/*m=*/mb), // rows of B
+                    static_cast<int>(/*n=*/w), // cols of B
                     /*alpha=*/1.0,
                     L_diag,
-                    /*lda=*/m,
+                    static_cast<int>(/*lda=*/m),
                     A_rect,
-                    /*ldb=*/m);
+                    static_cast<int>(/*ldb=*/m));
     }
 
     // Scatter both diagonal & rectangular pieces back into L's CSC columns
-    for (int j = start; j < end; ++j) {
-        const int cj = j - start;
+    for (auto j = start; j < end; ++j) {
+        const auto cj = j - start;
 
         /// Address of column `j` in panel
         const auto* Pcol = P.data_ptr() + cj * m;
@@ -1055,7 +1186,7 @@ std::expected<UpdateBlock, std::string> factorize_sn(int start, int end, panel<T
 
     // Build the trailing update: A_{off} := A_{off} - L_{rect} * L_{rect}^T (lower, dense)
     UpdateBlock upd;
-    upd.ld = std::max(0, mb);
+    upd.ld = std::max(0, static_cast<int>(mb));
 
     if (mb > 0) {
         upd.rows.assign(rows.begin() + w, rows.end()); // rows below the supernode
@@ -1066,14 +1197,14 @@ std::expected<UpdateBlock, std::string> factorize_sn(int start, int end, panel<T
         // C := -1 * L_{rect} * L_{rect}^T + 0*C
         cblas_dsyrk(CblasColMajor, CblasLower,
                     CblasNoTrans, // L21 is mb x w
-                    /*N=*/mb,
-                    /*K=*/w,
+                    static_cast<int>(/*N=*/mb),
+                    static_cast<int>(/*K=*/w),
                     /*alpha=*/-1.0,
                     L_rect,
-                    /*lda=*/m,
+                    static_cast<int>(/*lda=*/m),
                     /*beta=*/0.0,
                     upd.C.data(),
-                    /*ldc=*/mb);
+                    static_cast<int>(/*ldc=*/mb));
     }
 
     return upd;
@@ -1088,7 +1219,7 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol_sn(csc_matrix<T, sym:
     csc_matrix<T, sym::lower> L(S);
 
     // Supernode partition
-    std::vector<int> supernodes;
+    std::vector<std::size_t> supernodes;
     const auto sn_id = compute_supernodes(S, supernodes);
 
     const auto at = atree(S, sn_id, supernodes);
@@ -1099,8 +1230,8 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol_sn(csc_matrix<T, sym:
         for (int idx = 0; idx < lvl.size(); ++idx) {
             const auto sn = lvl[idx];
 
-            int start = supernodes[sn];
-            int end = supernodes[sn + 1];
+            const auto start = supernodes[sn];
+            const auto end = supernodes[sn + 1];
 
             // Compute rows spanned by this supernode
             const auto rows = supernode_rows(A, S.parent, start, end);
@@ -1117,4 +1248,21 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol_sn(csc_matrix<T, sym:
     }
 
     return L;
+}
+
+/**
+ * @brief Convert a CSC matrix (lower triangular) into an SChol structure.
+ */
+template <typename T>
+SChol to_schol(const csc_matrix<T, sym::lower>& L) {
+    SChol S;
+
+    S.cp = L.p();
+    S.rowind = L.i();
+    S.lnz = L.i().size();
+    S.unz = S.lnz;
+
+    S.parent.assign(L.size(), -1);
+
+    return S;
 }

@@ -19,7 +19,7 @@ int main() {
 
         csc_matrix<double, sym::upper> A = build_csc_matrix_from_pattern<double>(pattern);
 
-        int n = static_cast<int>(A.size());
+        const auto n = A.size();
 
         // Print matrix in dense format using operator[]
         std::cout << "Matrix A:\n";
@@ -42,13 +42,13 @@ int main() {
         std::vector<int> s(n);
         std::vector<double> x(n);
 
-        int top = ereach(A, 5, parent, s, w, x, n);
+        const auto top = ereach(A, 5, parent, s, w, x, n);
 
         // The pattern of column 1 of L is in s[top..n-1]
         std::cout << "Reach of Column 5:\n";
 
-        for (int idx = top; idx < n; ++idx) {
-            std::cout << s[idx] << " ";
+        for (auto t = top; t < n; t++) {
+            std::cout << s[t] << " ";
         }
 
         auto Schol = schol(A);
@@ -167,18 +167,18 @@ int main() {
         csc_matrix<double, sym::lower> L(S);
 
         // Supernode partition
-        std::vector<int> supernodes;
+        std::vector<std::size_t> supernodes;
         auto sn_id = compute_supernodes(S, supernodes);
 
         std::cout << "Supernodes: ";
-        for (int s : supernodes)
+        for (auto s : supernodes)
             std::cout << s << " ";
         std::cout << "\n\n";
 
         // Pick first supernode [0..end)
         for (int s = 0; s + 1 < (int)supernodes.size(); ++s) {
-            int start = supernodes[s];
-            int end = supernodes[s + 1];
+            const auto start = supernodes[s];
+            const auto end = supernodes[s + 1];
 
             // Compute rows spanned by this supernode
             const auto rows = supernode_rows(A, S.parent, start, end);
@@ -292,24 +292,27 @@ int main() {
 
         std::cout << S << std::endl;
 
+        std::cout << "s_chol the symbolic cholesky:\n"
+                  << to_schol(s_chol(A)) << std::endl;
+
         const auto n = A.size();
 
         std::vector<int> w(n, -1);
         std::vector<int> s(n);
         std::vector<double> x(n);
 
-        int top = ereach(A, 2, etree(A), s, w, x, n);
+        const auto top = ereach(A, 2, etree(A), s, w, x, n);
 
         // The pattern of column 1 of L is in s[top..n-1]
         std::cout << "Reach of Column 2:\n";
 
-        for (int idx = top; idx < n; ++idx) {
+        for (auto idx = top; idx < n; ++idx) {
             std::cout << s[idx] << " ";
         }
 
         std::cout << "\n\n";
 
-        std::vector<int> supernodes;
+        std::vector<std::size_t> supernodes;
 
         auto sn_id = compute_supernodes(S, supernodes);
 

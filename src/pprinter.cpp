@@ -5,7 +5,7 @@
 #include "pprinter.hpp"
 
 std::ostream& operator<<(std::ostream& os, const SChol& S) {
-    int n = static_cast<int>(S.parent.size());
+    const auto n = S.parent.size();
     os << "Symbolic structure (n=" << n << ", nnz=" << S.cp.back() << ")\n";
 
     // Print column headers
@@ -40,6 +40,20 @@ std::string to_string(const elimination_tree& parent) {
     stream << "[";
 
     for (int v : parent) {
+        stream << v << ", ";
+    }
+
+    stream << "]\n";
+
+    return stream.str();
+}
+
+std::string to_string(const std::vector<std::size_t>& parent) {
+    std::stringstream stream;
+
+    stream << "[";
+
+    for (auto v : parent) {
         stream << v << ", ";
     }
 
