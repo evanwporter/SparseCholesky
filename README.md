@@ -24,7 +24,7 @@ std::cout << to_string(A) << std::endl;
 
 ```
 auto S = schol(A); // symbolic
-auto L = chol(A, S).value().value(); // numeric
+auto L = chol(A, S).value(); // numeric
 
 std::cout << to_string(L) << "\n";
 ```
