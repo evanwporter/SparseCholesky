@@ -32,20 +32,60 @@ enum class sym {
 using elimination_tree = std::vector<int>;
 
 struct SChol {
-    /// elimination tree (size n)
+    /// Matrix size (rows/cols)
+    std::size_t n_ = 0;
+
+    /// Elimination tree (size n)
     std::vector<int> parent;
 
-    /// column pointers for L (size n+1)
+    /// Column pointers for L (size n+1)
     std::vector<int> cp;
 
-    /// row indices for L (size nnz = cp.back())
+    /// Row indices for L (size nnz = cp.back())
     std::vector<int> rowind;
 
-    /// number nonzeros in lower triangle
+    /// Column pointers for L (size n+1)
+    std::vector<int> p_;
+
+    /// Row indices for L (size nnz = cp.back())
+    std::vector<int> i_;
+
+    /// Number nonzeros in lower triangle
+    std::size_t nnz = 0;
+
+    /// Number nonzeros in lower triangle
     std::size_t lnz = 0;
 
-    /// number nonzeros in upper triangle
+    /// Number nonzeros in upper triangle
     std::size_t unz = 0;
+
+    // Access (i, j) with symmetry awareness
+    bool operator[](int i, int j) const {
+        assert(i >= 0 && i < n_ && j >= 0 && j < n_);
+
+        if (i < j)
+            std::swap(i, j);
+
+        for (int idx = p_[j]; idx < p_[j + 1]; ++idx) {
+            if (i_[idx] == i)
+                return true;
+        }
+
+        // If we can't find it in the column pointers
+        return false;
+    }
+
+    size_t rows() const { return n_; }
+    size_t cols() const { return n_; }
+
+    size_t size() const { return n_; }
+    size_t capacity() const { return nnz; }
+
+    std::vector<int>& p() { return p_; }
+    std::vector<int>& i() { return i_; }
+
+    const std::vector<int>& p() const { return p_; }
+    const std::vector<int>& i() const { return i_; }
 };
 
 template <typename T, sym S = sym::upper>
@@ -69,6 +109,28 @@ private:
 
     /// Non-zero values (size nzmax)
     std::vector<T> x_;
+
+    T* find_entry(std::size_t i, std::size_t j) {
+        if constexpr (S == sym::upper) {
+            if (j < i)
+                std::swap(i, j);
+        } else if constexpr (S == sym::lower) {
+            if (i < j)
+                std::swap(i, j);
+        }
+
+        auto col_start = p_[j];
+        auto col_end = p_[j + 1];
+
+        // binary search to find the row
+        auto it = std::lower_bound(i_.begin() + col_start, i_.begin() + col_end, static_cast<int>(i));
+        if (it != i_.begin() + col_end && *it == static_cast<int>(i)) {
+            auto idx = std::distance(i_.begin(), it);
+            return &x_[idx];
+        }
+
+        return nullptr;
+    }
 
 public:
     csc_matrix(std::size_t m, std::size_t n, int nzmax) :
@@ -125,49 +187,24 @@ public:
     const std::vector<int>& i() const { return i_; }
     const std::vector<T>& x() const { return x_; }
 
-    // Access (i, j) with symmetry awareness
-    T operator[](int i, int j) const {
-        assert(i >= 0 && i < m_ && j >= 0 && j < n_);
-
-        if constexpr (S == sym::upper) {
-            if (j < i)
-                std::swap(i, j);
-        } else if constexpr (S == sym::lower) {
-            if (i < j)
-                std::swap(i, j);
+    // Access (i, j) with symmetry awareness.
+    T& operator[](std::size_t i, std::size_t j) {
+        assert(i < m_ && j < n_);
+        auto* ptr = find_entry(i, j);
+        if (!ptr) {
+            throw std::out_of_range("Element not present in CSC structure");
         }
-
-        for (int idx = p_[j]; idx < p_[j + 1]; ++idx) {
-            if (i_[idx] == i)
-                return x_[idx];
-        }
-
-        // If we can't find it in the column pointers
-        return T(0);
+        return *ptr;
     }
 
-    // TODO: merge [] and ()
-
     // Access (i, j) with symmetry awareness.
-    T& operator()(std::size_t i, std::size_t j) {
-        assert(i >= 0 && i < m_ && j >= 0 && j < n_);
-
-        if constexpr (S == sym::upper) {
-            if (j < i)
-                std::swap(i, j);
-        } else if constexpr (S == sym::lower) {
-            if (i < j)
-                std::swap(i, j);
+    const T operator[](std::size_t i, std::size_t j) const {
+        assert(i < m_ && j < n_);
+        auto* ptr = const_cast<csc_matrix*>(this)->find_entry(i, j);
+        if (!ptr) {
+            return T(0);
         }
-
-        // Search for existing slot
-        for (int idx = p_[j]; idx < p_[j + 1]; ++idx) {
-            if (i_[idx] == i) {
-                return x_[idx];
-            }
-        }
-
-        throw std::exception("");
+        return *ptr;
     }
 
     /// Transpose matrix
@@ -721,7 +758,7 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
             std::vector<int> w(n, -1);
             std::vector<T> x(n, T(0));
 
-            L.p()[k] = c[k]; // keep consistency with CSparse
+            L.p()[k] = c[k];
             x[k] = T(0);
             w[k] = k;
 
@@ -783,16 +820,18 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
 }
 
 template <typename T>
-csc_matrix<T, sym::lower> s_chol(const csc_matrix<T, sym::upper>& A) {
+SChol s_chol(const csc_matrix<T, sym::upper>& A) {
     const auto n = A.size();
 
-    const auto parent = etree(A);
+    SChol S;
+
+    S.parent = etree(A);
 
     /// postorder of the etree
-    const auto post = post_order(parent);
+    const auto post = post_order(S.parent);
 
     /// column counts for `L` (includes diagonal)
-    const auto colcount = col_count(A, parent, post);
+    const auto colcount = col_count(A, S.parent, post);
 
     /// column pointers
     std::vector<int> cp(n + 1);
@@ -806,14 +845,12 @@ csc_matrix<T, sym::lower> s_chol(const csc_matrix<T, sym::upper>& A) {
 
     cp[n] = nz;
 
-    assert(cp.size() == n + 1);
-    assert(parent.size() == n);
+    assert(S.parent.size() == n);
 
-    // Allocate result matrix `L` (lower triangular, stored in CSC form)
-    csc_matrix<T, sym::lower> L(n, cp.back());
-    L.p() = cp;
+    S.cp = cp;
 
-    auto& Li = L.i();
+    auto& Si = S.rowind;
+    Si.assign(nz, 0);
 
     /// `c[i]` holds the next free slot for column i
     std::vector<std::atomic<int>> c(n);
@@ -821,7 +858,7 @@ csc_matrix<T, sym::lower> s_chol(const csc_matrix<T, sym::upper>& A) {
         c[j].store(cp[j], std::memory_order_relaxed);
     }
 
-    const auto levels = compute_levels(parent);
+    const auto levels = compute_levels(S.parent);
 
     for (auto lvl : levels) {
 
@@ -837,33 +874,31 @@ csc_matrix<T, sym::lower> s_chol(const csc_matrix<T, sym::upper>& A) {
             std::vector<int> w(n, -1);
             std::vector<T> x(n, T(0));
 
-            L.p()[j] = c[j]; // keep consistency with CSparse
+            S.cp[j] = c[j];
             x[j] = T(0);
             w[j] = j;
 
             /// `ereach` fills `s[top..n-1]` with nonzero pattern and accumulates `x[]`
-            const auto top = ereach(A, j, parent, s, w, x, n);
+            const auto top = ereach(A, j, S.parent, s, w, x, n);
 
             for (auto t = top; t < n; ++t) {
                 int i = s[t];
 
                 // Append entry L(k,i) into column i
                 int q = c[i].fetch_add(1, std::memory_order_acq_rel);
-                Li[q] = j;
+                Si[q] = j;
             }
 
             // Place diagonal entry L(k,k)
             int q = c[j].fetch_add(1, std::memory_order_acq_rel);
-            Li[q] = j;
+            Si[q] = j;
         }
     }
 
     // finalize last column pointer
-    L.p()[n] = cp[n];
+    S.cp[n] = cp[n];
 
-    std::fill(L.x().begin(), L.x().end(), T(1));
-
-    return L;
+    return S;
 }
 
 /**
@@ -1054,7 +1089,7 @@ inline void scatter_panel_column_into_L(csc_matrix<T, sym::lower>& L, std::size_
     for (std::size_t r = 0; r < rows.size(); ++r) {
         if (Pcol[r] != 0) {
             const int row = rows[r];
-            L(row, j) = Pcol[r];
+            L[row, j] = Pcol[r];
         }
     }
 }
@@ -1080,7 +1115,7 @@ void apply_update(csc_matrix<T, sym::upper>& A, const UpdateBlock& upd) {
 
             if (upd.C[idx] != 0) {
                 // add contribution into A(row, col)
-                A(row, col) += upd.C[jj * mb + ii]; // C is column-major
+                A[row, col] += upd.C[jj * mb + ii]; // C is column-major
             }
         }
     }

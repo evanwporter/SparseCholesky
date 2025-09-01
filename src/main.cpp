@@ -293,7 +293,7 @@ int main() {
         std::cout << S << std::endl;
 
         std::cout << "s_chol the symbolic cholesky:\n"
-                  << to_schol(s_chol(A)) << std::endl;
+                  << s_chol(A) << std::endl;
 
         const auto n = A.size();
 
