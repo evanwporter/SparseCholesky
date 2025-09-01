@@ -6,7 +6,7 @@
 
 std::ostream& operator<<(std::ostream& os, const SChol& S) {
     const auto n = S.parent.size();
-    os << "Symbolic structure (n=" << n << ", nnz=" << S.cp.back() << ")\n";
+    os << "Symbolic structure (n=" << n << ", nnz=" << S.p().back() << ")\n";
 
     // Print column headers
     os << std::setw(4) << " ";
@@ -21,8 +21,8 @@ std::ostream& operator<<(std::ostream& os, const SChol& S) {
         for (int j = 0; j < n; ++j) {
             // scan column j's row list
             bool found = false;
-            for (int p = S.cp[j]; p < S.cp[j + 1]; ++p) {
-                if (S.rowind[p] == i) {
+            for (int p = S.p()[j]; p < S.p()[j + 1]; ++p) {
+                if (S.i()[p] == i) {
                     found = true;
                     break;
                 }

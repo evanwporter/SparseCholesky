@@ -290,10 +290,8 @@ int main() {
 
         const auto S = schol(A);
 
-        std::cout << S << std::endl;
-
-        std::cout << "s_chol the symbolic cholesky:\n"
-                  << s_chol(A) << std::endl;
+        std::cout << "schol the symbolic cholesky:\n"
+                  << S << std::endl;
 
         const auto n = A.size();
 

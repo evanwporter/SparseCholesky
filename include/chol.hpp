@@ -31,33 +31,71 @@ enum class sym {
 
 using elimination_tree = std::vector<int>;
 
-struct SChol {
-    /// Matrix size (rows/cols)
-    std::size_t n_ = 0;
+namespace internal {
+    class csc_storage {
+    protected:
+        /// Rows
+        std::size_t m_ = 0;
+
+        /// Cols
+        std::size_t n_ = 0;
+
+        /// Max non-zero entries
+        std::size_t nnz_ = 0;
+
+        /// Column pointers (size n+1)
+        // Contains the indice where the value starts in j_ and x_
+        std::vector<int> p_;
+
+        /// Row indices (size nzmax)
+        std::vector<int> i_;
+
+        csc_storage() = default;
+
+        csc_storage(std::size_t m_, std::size_t n_, std::size_t nnz_) :
+            m_(m_), n_(n_), nnz_(nnz_), p_(n_ + 1, 0), i_(nnz_) { }
+
+    public:
+        std::size_t rows() const { return m_; }
+        std::size_t cols() const { return n_; }
+
+        std::size_t size() const { return n_; }
+        std::size_t capacity() const { return nnz_; }
+
+        std::vector<int>& p() { return p_; }
+        std::vector<int>& i() { return i_; }
+
+        const std::vector<int>& p() const { return p_; }
+        const std::vector<int>& i() const { return i_; }
+
+        /**
+         * @brief Finds the index at `(i, j)`
+         * @todo transition return to an error/error code
+         *
+         * @param i row
+         * @param j col
+         * @return int -1 means that the index doesn't exist
+         */
+        int find_index(std::size_t i, std::size_t j) const {
+            auto col_start = p_[j];
+            auto col_end = p_[j + 1];
+
+            // binary search to find the row
+            auto it = std::lower_bound(i_.begin() + col_start, i_.begin() + col_end, static_cast<int>(i));
+            if (it != i_.begin() + col_end && *it == static_cast<int>(i)) {
+                auto idx = std::distance(i_.begin(), it);
+                return idx;
+            }
+
+            return -1;
+        }
+    };
+} // namespace internal
+
+struct SChol : public internal::csc_storage {
 
     /// Elimination tree (size n)
     std::vector<int> parent;
-
-    /// Column pointers for L (size n+1)
-    std::vector<int> cp;
-
-    /// Row indices for L (size nnz = cp.back())
-    std::vector<int> rowind;
-
-    /// Column pointers for L (size n+1)
-    std::vector<int> p_;
-
-    /// Row indices for L (size nnz = cp.back())
-    std::vector<int> i_;
-
-    /// Number nonzeros in lower triangle
-    std::size_t nnz = 0;
-
-    /// Number nonzeros in lower triangle
-    std::size_t lnz = 0;
-
-    /// Number nonzeros in upper triangle
-    std::size_t unz = 0;
 
     // Access (i, j) with symmetry awareness
     bool operator[](int i, int j) const {
@@ -66,47 +104,24 @@ struct SChol {
         if (i < j)
             std::swap(i, j);
 
-        for (int idx = p_[j]; idx < p_[j + 1]; ++idx) {
-            if (i_[idx] == i)
-                return true;
-        }
-
-        // If we can't find it in the column pointers
-        return false;
+        if (find_index(i, j) == -1)
+            return false;
+        else
+            return true;
     }
 
-    size_t rows() const { return n_; }
-    size_t cols() const { return n_; }
+    void set_capacity(std::size_t nnz) {
+        nnz_ = nnz;
+        i_.resize(nnz_);
+    }
 
-    size_t size() const { return n_; }
-    size_t capacity() const { return nnz; }
-
-    std::vector<int>& p() { return p_; }
-    std::vector<int>& i() { return i_; }
-
-    const std::vector<int>& p() const { return p_; }
-    const std::vector<int>& i() const { return i_; }
+    size_t size() const { return p_.size() - 1; }
+    size_t capacity() const { return i_.size(); }
 };
 
 template <typename T, sym S = sym::upper>
-class csc_matrix {
+class csc_matrix : public internal::csc_storage {
 private:
-    /// Rows
-    std::size_t m_ = 0;
-
-    // Cols
-    std::size_t n_ = 0;
-
-    /// Max non-zero entries
-    std::size_t nzmax_ = 0;
-
-    /// Column pointers (size n+1)
-    // Contains the indice where the value starts in j_ and x_
-    std::vector<int> p_;
-
-    /// Row indices (size nzmax)
-    std::vector<int> i_;
-
     /// Non-zero values (size nzmax)
     std::vector<T> x_;
 
@@ -118,30 +133,15 @@ private:
             if (i < j)
                 std::swap(i, j);
         }
-
-        auto col_start = p_[j];
-        auto col_end = p_[j + 1];
-
-        // binary search to find the row
-        auto it = std::lower_bound(i_.begin() + col_start, i_.begin() + col_end, static_cast<int>(i));
-        if (it != i_.begin() + col_end && *it == static_cast<int>(i)) {
-            auto idx = std::distance(i_.begin(), it);
-            return &x_[idx];
-        }
-
-        return nullptr;
+        int idx = find_index(i, j);
+        return (idx == -1) ? nullptr : &x_[idx];
     }
 
 public:
-    csc_matrix(std::size_t m, std::size_t n, int nzmax) :
-        n_(n),
-        m_(m),
-        nzmax_(nzmax),
-        p_(n + 1, 0),
-        i_(nzmax),
-        x_(nzmax, T(0)) {
+    csc_matrix(std::size_t m, std::size_t n, std::size_t nnz) :
+        internal::csc_storage(m, n, nnz), x_(nnz, T { }) {
 
-        assert(m > 0 && n > 0 && nzmax > 0);
+        assert(m > 0 && n > 0 && nnz > 0);
 
         if constexpr (S != sym::none) {
 
@@ -153,39 +153,20 @@ public:
     /// Construct CSC matrix directly from symbolic analysis
     csc_matrix(const SChol& schol)
         requires(S != sym::none)
-        :
-        m_(schol.parent.size()),
-        n_(schol.parent.size()),
-        nzmax_(schol.cp.back()),
-        p_(schol.cp),
-        i_(schol.rowind),
-        x_(schol.cp.back(), T(0)) {
-        assert(m_ == n_);
+        : internal::csc_storage(schol.size(), schol.size(), schol.capacity()),
+          x_(schol.capacity(), T { }) {
+        p_ = schol.p();
+        i_ = schol.i();
     }
 
     // Constructor only available if Symmetric
-    csc_matrix(std::size_t n, std::size_t nzmax)
+    csc_matrix(std::size_t n, std::size_t nnz)
         requires(S != sym::none)
         :
-        m_(n), n_(n), nzmax_(nzmax),
-        p_(n + 1, 0), i_(nzmax), x_(nzmax, T(0)) {
-        assert(nzmax <= n * (n + 1) / 2);
-        assert(n > 0 && nzmax > 0);
+        internal::csc_storage(n, n, nnz), x_(nnz, T { }) {
+        assert(nnz <= n * (n + 1) / 2);
+        assert(n > 0 && nnz > 0);
     }
-
-    size_t rows() const { return m_; }
-    size_t cols() const { return n_; }
-
-    size_t size() const { return n_; }
-    size_t capacity() const { return nzmax_; }
-
-    std::vector<int>& p() { return p_; }
-    std::vector<int>& i() { return i_; }
-    std::vector<T>& x() { return x_; }
-
-    const std::vector<int>& p() const { return p_; }
-    const std::vector<int>& i() const { return i_; }
-    const std::vector<T>& x() const { return x_; }
 
     // Access (i, j) with symmetry awareness.
     T& operator[](std::size_t i, std::size_t j) {
@@ -206,6 +187,10 @@ public:
         }
         return *ptr;
     }
+
+    std::vector<T>& x() { return x_; }
+
+    const std::vector<T>& x() const { return x_; }
 
     /// Transpose matrix
     csc_matrix<T, sym::none> transpose() const {
@@ -577,19 +562,21 @@ std::vector<int> col_count(const csc_matrix<T>& A, const std::vector<int>& paren
 }
 
 /**
- * @brief Find the symbolic cholesky factorization
+ * @brief Compute the symbolic cholesky factorization using the etree.
  */
 template <typename T>
 SChol schol(const csc_matrix<T, sym::upper>& A) {
     const int n = static_cast<int>(A.size());
     SChol S;
 
+    auto& Sp = S.p();
+
     // etree on A (upper triangle)
     S.parent = etree(A);
 
     // Reserve column pointers
-    S.cp.resize(n + 1);
-    S.cp[0] = 0;
+    Sp.resize(n + 1);
+    Sp[0] = 0;
 
     std::vector<int> s(n), w(n, -1);
     std::vector<T> x(n, T(0));
@@ -617,18 +604,15 @@ SChol schol(const csc_matrix<T, sym::upper>& A) {
         std::sort(rowind_all.begin() + col_start, rowind_all.end());
 
         // Update column pointer
-        S.cp[j + 1] = static_cast<int>(rowind_all.size());
+        Sp[j + 1] = static_cast<int>(rowind_all.size());
     }
 
     // Finalize row indices
-    S.rowind = std::move(rowind_all);
+    S.i() = std::move(rowind_all);
 
-    const auto nz = S.rowind.size();
+    const auto nnz = S.i().size();
 
-    S.lnz = nz;
-
-    // not used for the cholesky, but I have it here for completeness
-    S.unz = nz;
+    S.set_capacity(nnz);
 
     return S;
 }
@@ -802,9 +786,8 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
                 Lx[q] = lki;
             }
 
-            if (d <= T(0)) {
+            if (d <= T(0))
                 return std::unexpected("A is not positive definite.");
-            }
 
             // Place diagonal entry L(k,k)
             int q = c[k].fetch_add(1, std::memory_order_acq_rel);
@@ -819,6 +802,14 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
     return L;
 }
 
+/**
+ * @brief Compute the symbolic cholesky factorization.
+ * @note Implemented as described on page 68 of Direct Methods for Sparse Linear Systems
+ *         by Timothy Davis
+ *
+ * @param A The matrix to compute the pattern of.
+ * @return SChol the symbolic cholesky pattern
+ */
 template <typename T>
 SChol s_chol(const csc_matrix<T, sym::upper>& A) {
     const auto n = A.size();
@@ -847,9 +838,9 @@ SChol s_chol(const csc_matrix<T, sym::upper>& A) {
 
     assert(S.parent.size() == n);
 
-    S.cp = cp;
+    S.p() = cp;
 
-    auto& Si = S.rowind;
+    auto& Si = S.i();
     Si.assign(nz, 0);
 
     /// `c[i]` holds the next free slot for column i
@@ -872,14 +863,12 @@ SChol s_chol(const csc_matrix<T, sym::upper>& A) {
             // Work arrays
             std::vector<int> s(n, -1);
             std::vector<int> w(n, -1);
-            std::vector<T> x(n, T(0));
 
-            S.cp[j] = c[j];
-            x[j] = T(0);
+            S.p()[j] = c[j];
             w[j] = j;
 
-            /// `ereach` fills `s[top..n-1]` with nonzero pattern and accumulates `x[]`
-            const auto top = ereach(A, j, S.parent, s, w, x, n);
+            /// `ereach` fills `s[top..n-1]` with nonzero pattern
+            const auto top = ereach(A, j, S.parent, s, w, n);
 
             for (auto t = top; t < n; ++t) {
                 int i = s[t];
@@ -896,7 +885,7 @@ SChol s_chol(const csc_matrix<T, sym::upper>& A) {
     }
 
     // finalize last column pointer
-    S.cp[n] = cp[n];
+    S.p()[n] = cp[n];
 
     return S;
 }
@@ -904,20 +893,20 @@ SChol s_chol(const csc_matrix<T, sym::upper>& A) {
 /**
  * @brief Group columns into supernodes.
  * @param S The symbolic cholesky
- * @param supernodes gets filled with the start indices of each supernode.
- * @return std::vector<int> size `n`; where super[j] is the supernode id of column j
+ * @param supernodes Gets filled with the start indices of each supernode.
+ * @return std::vector<int> Size `n`; where `sn_id[j]` is the supernode id of column `j`
  */
 std::vector<int> compute_supernodes(const SChol& S, std::vector<std::size_t>& supernodes);
 
 /**
  * @brief Generate a random symmetric sparse matrix in CSC format (upper triangle stored).
+ * @note  I used this stack overflow answer as a base: https://stackoverflow.com/a/30742847
+ *
  * @param n matrix size (square)
  * @param density percentage of nonzeros to zeros
  */
 template <typename T>
 csc_matrix<T, sym::upper> random_sparse(int n, double density = 0.25, bool positive_definite = true) {
-    // I used this stack overflow answer as a base
-    // https://stackoverflow.com/a/30742847
 
     pcg32 gen(21);
 
@@ -1248,7 +1237,7 @@ std::expected<UpdateBlock, std::string> factorize_sn(std::size_t start, std::siz
 template <typename T>
 std::expected<csc_matrix<T, sym::lower>, std::string> chol_sn(csc_matrix<T, sym::upper>& A) {
     // Symbolic analysis
-    const auto S = schol(A);
+    const auto S = s_chol(A);
 
     // Allocate L with symbolic size
     csc_matrix<T, sym::lower> L(S);
@@ -1283,21 +1272,4 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol_sn(csc_matrix<T, sym:
     }
 
     return L;
-}
-
-/**
- * @brief Convert a CSC matrix (lower triangular) into an SChol structure.
- */
-template <typename T>
-SChol to_schol(const csc_matrix<T, sym::lower>& L) {
-    SChol S;
-
-    S.cp = L.p();
-    S.rowind = L.i();
-    S.lnz = L.i().size();
-    S.unz = S.lnz;
-
-    S.parent.assign(L.size(), -1);
-
-    return S;
 }

@@ -42,7 +42,7 @@ std::vector<std::vector<int>> compute_levels(const std::vector<int>& parent) {
 std::vector<int> compute_supernodes(const SChol& S, std::vector<std::size_t>& supernodes) {
     const auto n = S.parent.size();
     const auto& parent = S.parent;
-    const auto& cp = S.cp; // column pointers
+    const auto& cp = S.p(); // column pointers
 
     /// sn_id maps each column to its supernode id
     std::vector<int> sn_id(n, -1);
@@ -118,8 +118,8 @@ std::vector<int> atree(const SChol& S, const std::vector<int>& sn_id, const std:
         const auto end = supernodes[s + 1]; // exclusive
 
         for (auto j = start; j < end; ++j) {
-            for (auto p = S.cp[j]; p < S.cp[j + 1]; ++p) {
-                int row = S.rowind[p];
+            for (auto p = S.p()[j]; p < S.p()[j + 1]; ++p) {
+                int row = S.i()[p];
                 if (row >= end) {
                     int t = sn_id[row];
                     if (t != s) {
