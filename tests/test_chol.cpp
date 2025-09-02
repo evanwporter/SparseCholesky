@@ -99,3 +99,43 @@ TEST(CholeskyTest, SimplicialCholesky) {
         }
     }
 }
+
+TEST(CholeskyTest, SupernodalCholesky) {
+    // clang-format off
+    double expected[9] = {
+        4.0, 1.0, 1.0, // col 0
+        1.0, 3.0, 0.0, // col 1
+        1.0, 0.0, 2.0  // col 2
+    };
+    // clang-format on
+
+    int n = 3;
+    int lda = n;
+    int info;
+    char uplo = 'L';
+
+    dpotrf_(&uplo, &n, expected, &lda, &info);
+
+    ASSERT_TRUE(info == 0);
+
+    std::vector<int> ti = { 0, 0, 0, 1, 1, 2 };
+    std::vector<int> tj = { 0, 1, 2, 1, 2, 2 };
+    std::vector<double> tx = { 4.0, 1.0, 1.0, 3.0, 0.0, 2.0 };
+
+    auto A = triplet_to_csc_matrix(ti, tj, tx, n);
+
+    auto L = chol_sn(A);
+
+    ASSERT_TRUE(L.has_value());
+
+    auto result = csc_to_dense(*L);
+
+    // we only compare the lower triangle since the upper triangle of `expected`
+    // is filled with old values from `A`
+    for (int j = 0; j < n; ++j) {
+        for (int i = j; i < n; ++i) { // only lower triangle
+            EXPECT_NEAR(result[i + j * n], expected[i + j * n], 1e-9)
+                << "Mismatch at (" << i << "," << j << ")";
+        }
+    }
+}
