@@ -1024,6 +1024,9 @@ private:
     /// column-major dense block
     std::vector<T> data;
 
+    /// CSC indices into `L.x()`
+    std::vector<int> indices_;
+
     /// the range of columns we want to pull from
     /// since the columns are contiguous
     std::pair<std::size_t, std::size_t> column_range;
@@ -1041,10 +1044,14 @@ public:
     panel(std::vector<int> rows, std::size_t start, std::size_t end) :
         m_(rows.size()), n_(end - start),
         data(rows.size() * (end - start), T(0)),
+        indices_(rows.size() * (end - start), -1),
         rows_(rows), column_range({ start, end }) { }
 
     std::size_t nrows() const { return m_; }
     std::size_t ncols() const { return n_; }
+
+    int& index(const std::size_t r, const std::size_t c) { return indices_[c * m_ + r]; }
+    const int index(const std::size_t r, const std::size_t c) const { return indices_[c * m_ + r]; }
 
     /// access element (col-major layout)
     T& operator[](std::size_t r, std::size_t c) { return data[c * m_ + r]; }
@@ -1103,6 +1110,7 @@ panel<T> extract_panel(const csc_matrix<T, S>& L, std::size_t start, std::size_t
 
             if (local_row != -1) {
                 P[local_row, local_col] = static_cast<int>(Lx[p]);
+                P.index(local_row, local_col) = p;
             }
         }
     }
@@ -1127,12 +1135,15 @@ struct UpdateBlock {
  * @param Pcol pointer to dense panel column (length m, ld=m)
  */
 template <typename T>
-inline void scatter_panel_column_into_L(csc_matrix<T, sym::none>& L, std::size_t j, const std::vector<int>& rows, const T* Pcol) {
+inline void scatter_panel_column_into_L(csc_matrix<T, sym::none>& L, std::size_t j, const panel<T>& P) {
+    const auto local_col = j - P.get_column_range().first;
+    const std::size_t m = P.nrows();
+
     // For each row in the panel, directly update L(row, j)
-    for (std::size_t r = 0; r < rows.size(); ++r) {
-        if (Pcol[r] != 0) {
-            const int row = rows[r];
-            L[row, j] = Pcol[r];
+    for (std::size_t r = 0; r < m; ++r) {
+        int idx = P.index(r, local_col);
+        if (idx != -1) {
+            L.x()[idx] = P[r, local_col];
         }
     }
 }
@@ -1254,12 +1265,7 @@ std::expected<UpdateBlock, std::string> factorize_sn(std::size_t start, std::siz
 
     // Scatter both diagonal & rectangular pieces back into L's CSC columns
     for (auto j = start; j < end; ++j) {
-        const auto cj = j - start;
-
-        /// Address of column `j` in panel
-        const auto* Pcol = P.data_ptr() + cj * m;
-
-        scatter_panel_column_into_L(L, j, rows, Pcol);
+        scatter_panel_column_into_L(L, j, P);
     }
 
     // Build the trailing update: A_{off} := A_{off} - L_{rect} * L_{rect}^T (lower, dense)
