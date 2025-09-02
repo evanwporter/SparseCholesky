@@ -319,13 +319,24 @@ int main() {
 
         std::cout << "atree: " << to_string(atree(S, sn_id, supernodes)) << std::endl;
 
-        auto B = random_sparse<double>(S);
+        auto B = random_sparse<double>(S).transpose();
 
         std::cout << "generated random matrix\n"
                   << B << std::endl;
 
         std::cout << "schol the symbolic cholesky:\n"
                   << S << std::endl;
+
+        const auto L_err = chol_sn(B);
+
+        if (L_err.has_value()) {
+            std::cout << "chol_sn:\n"
+                      << L_err.value() << std::endl;
+        }
+
+        else {
+            std::cout << L_err.error() << std::endl;
+        }
     }
 
     return 0;

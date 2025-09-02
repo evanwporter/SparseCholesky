@@ -83,7 +83,7 @@ namespace internal {
             // binary search to find the row
             auto it = std::lower_bound(i_.begin() + col_start, i_.begin() + col_end, static_cast<int>(i));
             if (it != i_.begin() + col_end && *it == static_cast<int>(i)) {
-                auto idx = std::distance(i_.begin(), it);
+                const auto idx = std::distance(i_.begin(), it);
                 return idx;
             }
 
@@ -193,7 +193,7 @@ public:
     const std::vector<T>& x() const { return x_; }
 
     /// Transpose matrix
-    csc_matrix<T, sym::none> transpose() const {
+    auto transpose() const {
         const int m = static_cast<int>(m_);
         const int n = static_cast<int>(n_);
         const auto& Ap = p_;
@@ -228,13 +228,25 @@ public:
             }
         }
 
-        // Build result matrix
-        csc_matrix<T, sym::none> AT(m, n, static_cast<int>(ATi.size()));
-        AT.p() = std::move(ATp);
-        AT.i() = std::move(ATi);
-        AT.x() = std::move(ATx);
-
-        return AT;
+        if constexpr (S == sym::upper) {
+            csc_matrix<T, sym::lower> AT(m, n, static_cast<int>(ATi.size()));
+            AT.p() = std::move(ATp);
+            AT.i() = std::move(ATi);
+            AT.x() = std::move(ATx);
+            return AT;
+        } else if constexpr (S == sym::lower) {
+            csc_matrix<T, sym::upper> AT(m, n, static_cast<int>(ATi.size()));
+            AT.p() = std::move(ATp);
+            AT.i() = std::move(ATi);
+            AT.x() = std::move(ATx);
+            return AT;
+        } else {
+            csc_matrix<T, sym::none> AT(m, n, static_cast<int>(ATi.size()));
+            AT.p() = std::move(ATp);
+            AT.i() = std::move(ATi);
+            AT.x() = std::move(ATx);
+            return AT;
+        }
     }
 };
 
@@ -966,11 +978,11 @@ csc_matrix<T, sym::lower> random_sparse(const SChol& S, bool positive_definite =
 
             if (i == j) {
                 // Diagonal entries
-                T val = static_cast<T>(std::abs(dist(gen)) + (positive_definite ? n : 0));
+                T val = static_cast<T>(1.5 * (std::abs(dist(gen)) + (positive_definite ? n : 0)));
                 Ax[p] = val;
             } else {
                 // Off-diagonals: symmetric but upper triangle stored
-                Ax[p] = static_cast<T>(dist(gen));
+                Ax[p] = abs(static_cast<T>(dist(gen)) * 10);
             }
         }
     }
@@ -1032,8 +1044,8 @@ public:
     std::size_t ncols() const { return n_; }
 
     /// access element (col-major layout)
-    T& operator()(std::size_t r, std::size_t c) { return data[c * m_ + r]; }
-    const T& operator()(std::size_t r, std::size_t c) const { return data[c * m_ + r]; }
+    T& operator[](std::size_t r, std::size_t c) { return data[c * m_ + r]; }
+    const T& operator[](std::size_t r, std::size_t c) const { return data[c * m_ + r]; }
 
     /// data getter helpers
     T* data_ptr() { return data.data(); }
@@ -1087,7 +1099,7 @@ panel<T> extract_panel(const csc_matrix<T, S>& L, std::size_t start, std::size_t
             std::size_t local_row = row2local[row];
 
             if (local_row != -1) {
-                P(local_row, local_col) = static_cast<int>(Lx[p]);
+                P[local_row, local_col] = static_cast<int>(Lx[p]);
             }
         }
     }
@@ -1209,7 +1221,7 @@ std::expected<UpdateBlock, std::string> factorize_sn(std::size_t start, std::siz
                 // Optionally: dump the diagonal block for debugging
                 ss << " Diagonal entries: ";
                 for (int d = 0; d < nblk; ++d) {
-                    ss << P(d, d) << " ";
+                    ss << P[d, d] << " ";
                 }
                 return std::unexpected(ss.str());
             }

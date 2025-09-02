@@ -55,7 +55,7 @@ std::ostream& operator<<(std::ostream& os, const panel<T>& P) {
     for (int i = 0; i < m; ++i) {
         os << std::setw(width) << rows[i];
         for (int j = 0; j < n; ++j) {
-            os << std::setw(width) << P(i, j);
+            os << std::setw(width) << P[i, j];
         }
         os << "\n";
     }
