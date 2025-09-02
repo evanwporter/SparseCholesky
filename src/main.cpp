@@ -318,6 +318,14 @@ int main() {
                   << "supernode " << to_string(supernodes) << std::endl;
 
         std::cout << "atree: " << to_string(atree(S, sn_id, supernodes)) << std::endl;
+
+        auto B = random_sparse<double>(S);
+
+        std::cout << "generated random matrix\n"
+                  << B << std::endl;
+
+        std::cout << "schol the symbolic cholesky:\n"
+                  << S << std::endl;
     }
 
     return 0;

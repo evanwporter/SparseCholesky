@@ -565,7 +565,7 @@ std::vector<int> col_count(const csc_matrix<T>& A, const std::vector<int>& paren
  * @brief Compute the symbolic cholesky factorization using the etree.
  */
 template <typename T>
-SChol schol(const csc_matrix<T, sym::upper>& A) {
+SChol schol_etree(const csc_matrix<T, sym::upper>& A) {
     const int n = static_cast<int>(A.size());
     SChol S;
 
@@ -811,7 +811,7 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
  * @return SChol the symbolic cholesky pattern
  */
 template <typename T>
-SChol s_chol(const csc_matrix<T, sym::upper>& A) {
+SChol schol(const csc_matrix<T, sym::upper>& A) {
     const auto n = A.size();
 
     SChol S;
@@ -937,6 +937,45 @@ csc_matrix<T, sym::upper> random_sparse(int n, double density = 0.25, bool posit
     }
 
     return triplet_to_csc_matrix(ti, tj, tx, n);
+}
+
+/**
+ * @brief Generate a random SPD matrix with nonzeros constrained to SChol pattern.
+ *
+ * @param S symbolic Cholesky factorization (contains the sparsity pattern)
+ * @return csc_matrix<T, sym::upper> random SPD matrix
+ */
+template <typename T>
+csc_matrix<T, sym::lower> random_sparse(const SChol& S, bool positive_definite = true) {
+    const int n = static_cast<int>(S.size());
+    const auto& Sp = S.p();
+    const auto& Si = S.i();
+
+    // Allocate matrix with same structure as S
+    csc_matrix<T, sym::lower> A(S);
+    auto& Ax = A.x();
+
+    // RNG
+    pcg32 gen(42);
+    std::uniform_real_distribution<double> dist(-1.0, 1.0);
+
+    // Fill values
+    for (int j = 0; j < n; ++j) {
+        for (int p = Sp[j]; p < Sp[j + 1]; ++p) {
+            int i = Si[p];
+
+            if (i == j) {
+                // Diagonal entries
+                T val = static_cast<T>(std::abs(dist(gen)) + (positive_definite ? n : 0));
+                Ax[p] = val;
+            } else {
+                // Off-diagonals: symmetric but upper triangle stored
+                Ax[p] = static_cast<T>(dist(gen));
+            }
+        }
+    }
+
+    return A;
 }
 
 /**
@@ -1237,7 +1276,7 @@ std::expected<UpdateBlock, std::string> factorize_sn(std::size_t start, std::siz
 template <typename T>
 std::expected<csc_matrix<T, sym::lower>, std::string> chol_sn(csc_matrix<T, sym::upper>& A) {
     // Symbolic analysis
-    const auto S = s_chol(A);
+    const auto S = schol(A);
 
     // Allocate L with symbolic size
     csc_matrix<T, sym::lower> L(S);
