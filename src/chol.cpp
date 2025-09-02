@@ -1,7 +1,7 @@
 #include <algorithm>
 #include <vector>
 
-#include <chol.hpp>
+#include "chol.hpp"
 
 // parent[j] = parent of j, or -1 if root
 std::vector<std::vector<int>> compute_levels(const std::vector<int>& parent) {

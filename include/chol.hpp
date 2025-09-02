@@ -160,7 +160,7 @@ public:
 
     /// Construct CSC matrix directly from symbolic analysis
     csc_matrix(const SChol& schol)
-        requires(S != sym::none)
+        // requires(S != sym::none)
         : internal::csc_storage(schol.size(), schol.size(), schol.capacity()),
           x_(schol.capacity(), T { }) {
         p_ = schol.p();
@@ -707,7 +707,7 @@ std::vector<std::vector<int>> compute_levels(const std::vector<int>& parent);
  * @param optional status
  */
 template <typename T>
-std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, sym::upper>& A) {
+std::expected<csc_matrix<T, sym::none>, std::string> chol(const csc_matrix<T, sym::upper>& A) {
     const std::size_t n = A.size();
 
     const auto parent = etree(A);
@@ -734,7 +734,7 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol(const csc_matrix<T, s
     assert(parent.size() == n);
 
     // Allocate result matrix `L` (lower triangular, stored in CSC form)
-    csc_matrix<T, sym::lower> L(n, cp.back());
+    csc_matrix<T, sym::none> L(n, n, nz);
     L.p() = cp;
 
     auto& Li = L.i();
@@ -1127,7 +1127,7 @@ struct UpdateBlock {
  * @param Pcol pointer to dense panel column (length m, ld=m)
  */
 template <typename T>
-inline void scatter_panel_column_into_L(csc_matrix<T, sym::lower>& L, std::size_t j, const std::vector<int>& rows, const T* Pcol) {
+inline void scatter_panel_column_into_L(csc_matrix<T, sym::none>& L, std::size_t j, const std::vector<int>& rows, const T* Pcol) {
     // For each row in the panel, directly update L(row, j)
     for (std::size_t r = 0; r < rows.size(); ++r) {
         if (Pcol[r] != 0) {
@@ -1178,7 +1178,7 @@ std::vector<int> atree(const SChol& S, const std::vector<int>& sn_id, const std:
  * @param L global L to update in-place
  */
 template <typename T>
-std::expected<UpdateBlock, std::string> factorize_sn(std::size_t start, std::size_t end, panel<T>& P, const SChol& S, csc_matrix<T, sym::lower>& L) {
+std::expected<UpdateBlock, std::string> factorize_sn(std::size_t start, std::size_t end, panel<T>& P, const SChol& S, csc_matrix<T, sym::none>& L) {
 
     /// super node width (in columns)
     const auto w = end - start;
@@ -1289,12 +1289,12 @@ std::expected<UpdateBlock, std::string> factorize_sn(std::size_t start, std::siz
 }
 
 template <typename T>
-std::expected<csc_matrix<T, sym::lower>, std::string> chol_sn(csc_matrix<T, sym::upper>& A) {
+std::expected<csc_matrix<T, sym::none>, std::string> chol_sn(csc_matrix<T, sym::upper>& A) {
     // Symbolic analysis
     const auto S = schol(A);
 
     // Allocate L with symbolic size
-    csc_matrix<T, sym::lower> L(S);
+    csc_matrix<T, sym::none> L(S);
 
     // Supernode partition
     std::vector<std::size_t> supernodes;
@@ -1326,4 +1326,37 @@ std::expected<csc_matrix<T, sym::lower>, std::string> chol_sn(csc_matrix<T, sym:
     }
 
     return L;
+}
+
+template <typename T, sym S>
+std::vector<T> csc_to_dense(const csc_matrix<T, S>& A) {
+    int m = static_cast<int>(A.rows());
+    int n = static_cast<int>(A.cols());
+    std::vector<T> dense(m * n, T(0));
+
+    const auto& Ap = A.p();
+    const auto& Ai = A.i();
+    const auto& Ax = A.x();
+
+    for (int j = 0; j < n; ++j) {
+        for (int p = Ap[j]; p < Ap[j + 1]; ++p) {
+            int i = Ai[p];
+
+            // Always scatter the explicitly stored entry
+            dense[i + j * m] = Ax[p];
+
+            if constexpr (S == sym::upper) {
+                // Mirror upper to lower
+                if (i != j)
+                    dense[j + i * m] = Ax[p];
+            } else if constexpr (S == sym::lower) {
+                // Mirror lower to upper
+                if (i != j)
+                    dense[j + i * m] = Ax[p];
+            }
+            // sym::none → nothing to do (already stored all entries)
+        }
+    }
+
+    return dense; // column-major dense storage
 }

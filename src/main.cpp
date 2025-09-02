@@ -164,7 +164,7 @@ int main() {
         auto S = schol(A);
 
         // Allocate L with symbolic size
-        csc_matrix<double, sym::lower> L(S);
+        csc_matrix<double, sym::none> L(S);
 
         // Supernode partition
         std::vector<std::size_t> supernodes;
