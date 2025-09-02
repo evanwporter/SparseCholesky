@@ -94,6 +94,14 @@ namespace internal {
 
 struct SChol : public internal::csc_storage {
 
+    SChol(std::size_t n, std::size_t nnz) :
+        internal::csc_storage(n, n, nnz) {
+        assert(nnz <= n * (n + 1) / 2);
+        assert(n > 0 && nnz > 0);
+    }
+
+    SChol() = default;
+
     /// Elimination tree (size n)
     std::vector<int> parent;
 
@@ -826,39 +834,37 @@ template <typename T>
 SChol schol(const csc_matrix<T, sym::upper>& A) {
     const auto n = A.size();
 
-    SChol S;
-
-    S.parent = etree(A);
+    // elimination tree
+    const auto parent = etree(A);
 
     /// postorder of the etree
-    const auto post = post_order(S.parent);
+    const auto post = post_order(parent);
 
     /// column counts for `L` (includes diagonal)
-    const auto colcount = col_count(A, S.parent, post);
+    const auto colcount = col_count(A, parent, post);
 
     /// column pointers
     std::vector<int> cp(n + 1);
 
     // column pointers are created by accumulating the column count
-    int nz = 0;
+    int nnz = 0;
     for (int j = 0; j < n; ++j) {
-        cp[j] = nz;
-        nz += colcount[j];
+        cp[j] = nnz;
+        nnz += colcount[j];
     }
+    cp[n] = nnz;
 
-    cp[n] = nz;
+    SChol S(n, nnz);
 
-    assert(S.parent.size() == n);
-
-    S.p() = cp;
+    S.p() = std::move(cp);
+    S.parent = std::move(parent);
 
     auto& Si = S.i();
-    Si.assign(nz, 0);
 
     /// `c[i]` holds the next free slot for column i
     std::vector<std::atomic<int>> c(n);
     for (int j = 0; j < n; ++j) {
-        c[j].store(cp[j], std::memory_order_relaxed);
+        c[j].store(S.p()[j], std::memory_order_relaxed);
     }
 
     const auto levels = compute_levels(S.parent);
@@ -876,7 +882,7 @@ SChol schol(const csc_matrix<T, sym::upper>& A) {
             std::vector<int> s(n, -1);
             std::vector<int> w(n, -1);
 
-            S.p()[j] = c[j];
+            // S.p()[j] = c[j];
             w[j] = j;
 
             /// `ereach` fills `s[top..n-1]` with nonzero pattern
@@ -895,9 +901,6 @@ SChol schol(const csc_matrix<T, sym::upper>& A) {
             Si[q] = j;
         }
     }
-
-    // finalize last column pointer
-    S.p()[n] = cp[n];
 
     return S;
 }

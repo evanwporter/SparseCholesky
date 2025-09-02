@@ -40,8 +40,8 @@ std::ostream& operator<<(std::ostream& os, const panel<T>& P) {
     auto n = P.ncols();
     const auto& rows = P.get_rows();
 
-    int width = 10;
-    int precision = 4;
+    constexpr int width = 10;
+    constexpr int precision = 2;
 
     os << std::fixed << std::setprecision(precision);
 
