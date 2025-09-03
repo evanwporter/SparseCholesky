@@ -2,10 +2,6 @@
 
 #include "chol.hpp"
 
-extern "C" {
-void dpotrf_(const char* uplo, const int* n, double* a, const int* lda, int* info);
-}
-
 // Pattern from page 26 of my thesis
 TEST(CholeskyTest, EliminationTree) {
     std::vector<std::vector<int>> pattern = {

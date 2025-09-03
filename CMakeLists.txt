@@ -12,6 +12,7 @@ set(LIB_SOURCES
 
 find_package(OpenBLAS CONFIG REQUIRED)
 find_package(lapack CONFIG REQUIRED)
+find_package(Eigen3 CONFIG REQUIRED)
 
 add_library(libsparse STATIC ${LIB_SOURCES})
 
@@ -21,7 +22,8 @@ target_include_directories(libsparse
 
 target_link_libraries(libsparse 
     PUBLIC OpenBLAS::OpenBLAS
-           lapack)
+           lapack
+           Eigen3::Eigen)
 
 set(EXE_SOURCES
     src/main.cpp
@@ -36,6 +38,7 @@ FetchContent_Declare(
   googletest
   # Specify the commit you depend on and update it regularly.
   URL https://github.com/google/googletest/archive/52eb8108c5bdec04579160ae17225d66034bd723.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE 
 )
 # For Windows: Prevent overriding the parent project's compiler/linker settings
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)

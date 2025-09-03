@@ -29,6 +29,10 @@ enum class sym {
     lower
 };
 
+#include <Eigen/Cholesky>
+#include <Eigen/Core>
+#include <Eigen/Sparse>
+
 using elimination_tree = std::vector<int>;
 
 namespace internal {
@@ -174,6 +178,42 @@ public:
         internal::csc_storage(n, n, nnz), x_(nnz, T { }) {
         assert(nnz <= n * (n + 1) / 2);
         assert(n > 0 && nnz > 0);
+    }
+
+    /**
+     * @brief Construct a CSC matrix using the sparsity pattern from SChol
+     *        and populate it with values from an existing matrix A (where available).
+     *
+     * @param A Original SPD matrix (must be sym::upper or sym::lower).
+     * @param S Symbolic Cholesky pattern (defines the new sparsity pattern).
+     */
+    template <sym S_A>
+    csc_matrix(const csc_matrix<T, S_A>& A, const SChol& schol) :
+        internal::csc_storage(schol.size(), schol.size(), schol.capacity()),
+        x_(schol.capacity(), T(0)) {
+
+        p_ = schol.p();
+        i_ = schol.i();
+
+        // Copy values from A where (i,j) exists in A
+        const auto& Ap = A.p();
+        const auto& Ai = A.i();
+        const auto& Ax = A.x();
+
+        for (int j = 0; j < static_cast<int>(A.cols()); ++j) {
+            int p_start = p_[j];
+            int p_end = p_[j + 1];
+            for (int pS = p_start; pS < p_end; ++pS) {
+                int irow = i_[pS];
+                // Try to find A(irow, j)
+                int idxA = A.find_index(irow, j);
+                if (idxA != -1) {
+                    x_[pS] = Ax[idxA];
+                } else {
+                    x_[pS] = T(0); // fill-in slot
+                }
+            }
+        }
     }
 
     // Access (i, j) with symmetry awareness.
@@ -1109,7 +1149,7 @@ panel<T> extract_panel(const csc_matrix<T, S>& L, std::size_t start, std::size_t
             std::size_t local_row = row2local[row];
 
             if (local_row != -1) {
-                P[local_row, local_col] = static_cast<int>(Lx[p]);
+                P[local_row, local_col] = Lx[p];
                 P.index(local_row, local_col) = p;
             }
         }
@@ -1154,7 +1194,7 @@ inline void scatter_panel_column_into_L(csc_matrix<T, sym::none>& L, std::size_t
  */
 template <typename T>
 void apply_update(csc_matrix<T, sym::upper>& A, const UpdateBlock& upd) {
-    const int mb = upd.ld;
+    const auto mb = upd.ld;
     if (mb <= 0)
         return;
 
@@ -1232,7 +1272,7 @@ std::expected<UpdateBlock, std::string> factorize_sn(std::size_t start, std::siz
                 ss << "dpotrf_ failed in supernode [" << start << "," << end
                    << "): leading minor of order " << info
                    << " is not positive definite.";
-                // Optionally: dump the diagonal block for debugging
+
                 ss << " Diagonal entries: ";
                 for (int d = 0; d < nblk; ++d) {
                     ss << P[d, d] << " ";
@@ -1294,6 +1334,75 @@ std::expected<UpdateBlock, std::string> factorize_sn(std::size_t start, std::siz
     return upd;
 }
 
+/**
+ * @brief Factorize a supernode using Eigen3
+ * @param start supernode starting column
+ * @param end supernode ending column `[start, end)`
+ * @param P assembled dense panel (col-major)
+ * @param S symbolic output (cp)
+ * @param L global L to update in-place
+ */
+template <typename T>
+std::expected<UpdateBlock, std::string> factorize_sn_eigen(std::size_t start, std::size_t end, panel<T>& P, const SChol& S, csc_matrix<T, sym::none>& L) {
+
+    /// super node width (in columns)
+    const auto w = end - start;
+
+    /// #rows in panel
+    const auto m = P.nrows();
+
+    /// #below diagonal rows
+    const auto mb = m - w;
+
+    const auto& rows = P.get_rows();
+
+    if (w <= 0)
+        return std::unexpected("Empty supernode.");
+
+    // Map dense panel into Eigen
+    Eigen::Map<Eigen::MatrixXd> Pmat(P.data_ptr(), m, w);
+
+    // L_{diag}
+    // We find `L_{diag}` by performing the Cholesky on `A_{diag}`
+    auto L_diag = Pmat.topRows(w);
+    Eigen::LLT<Eigen::Ref<Eigen::MatrixXd>> llt(L_diag);
+    if (llt.info() != Eigen::Success)
+        return std::unexpected("Cholesky failed: block not positive definite.");
+
+    // L_{rect}
+    /// We find `L_{rect}` using a triangular solve on the equation
+    /// `L_{rect} = A_{rect} L_{diag}^{-T}`
+    if (mb > 0) {
+        auto L_rect = Pmat.bottomRows(mb);
+        // clang-format off
+        L_rect = L_rect * L_diag.transpose()
+                                .triangularView<Eigen::Lower>()
+                                .solve(Eigen::MatrixXd::Identity(w, w));
+        // clang-format on
+    }
+
+    // Scatter both diagonal & rectangular pieces back into L's CSC columns
+    for (auto j = start; j < end; ++j) {
+        scatter_panel_column_into_L(L, j, P);
+    }
+
+    // Build the trailing update:
+    // A_{off} := A_{off} - L_{rect} * L_{rect}^T (lower, dense)
+    UpdateBlock upd;
+    upd.ld = std::max(0, static_cast<int>(mb));
+    if (mb > 0) {
+        upd.rows.assign(rows.begin() + w, rows.end());
+        upd.C.resize(mb * mb);
+
+        auto L_rect = Pmat.bottomRows(mb);
+        Eigen::MatrixXd C = -L_rect * L_rect.transpose();
+
+        Eigen::Map<Eigen::MatrixXd>(upd.C.data(), mb, mb) = C.selfadjointView<Eigen::Lower>();
+    }
+
+    return upd;
+}
+
 template <typename T>
 std::expected<csc_matrix<T, sym::none>, std::string> chol_sn(csc_matrix<T, sym::upper>& A) {
     // Symbolic analysis
@@ -1305,6 +1414,8 @@ std::expected<csc_matrix<T, sym::none>, std::string> chol_sn(csc_matrix<T, sym::
     // Supernode partition
     std::vector<std::size_t> supernodes;
     const auto sn_id = compute_supernodes(S, supernodes);
+
+    csc_matrix<T, sym::upper> A_work(A, S);
 
     const auto at = atree(S, sn_id, supernodes);
     const auto levels = compute_levels(at);
@@ -1318,16 +1429,16 @@ std::expected<csc_matrix<T, sym::none>, std::string> chol_sn(csc_matrix<T, sym::
             const auto end = supernodes[sn + 1];
 
             // Compute rows spanned by this supernode
-            const auto rows = supernode_rows(A, S.parent, start, end);
+            const auto rows = supernode_rows(A_work, S.parent, start, end);
 
-            panel<T> P = extract_panel(A.transpose(), start, end, rows);
+            panel<T> P = extract_panel(A_work.transpose(), start, end, rows);
 
             // Factorize this supernode
             const auto result = factorize_sn(start, end, P, S, L);
             if (!result)
                 return std::unexpected(result.error());
 
-            apply_update(A, result.value());
+            apply_update(A_work, result.value());
         }
     }
 
